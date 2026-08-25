@@ -1,0 +1,31 @@
+import { Test, TestingModule } from '@nestjs/testing';
+
+import { FriendsService } from './friends.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+
+describe('FriendsService', () => {
+  let service: FriendsService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        FriendsService,
+        {
+          provide: PrismaService,
+          useValue: {},
+        },
+        {
+          provide: NotificationsService,
+          useValue: {},
+        },
+      ],
+    }).compile();
+
+    service = module.get<FriendsService>(FriendsService);
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+});

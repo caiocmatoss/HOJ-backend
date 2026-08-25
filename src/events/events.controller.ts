@@ -1,0 +1,74 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
+import { CreateEventDto } from './dto/create-event.dto';
+import { UpdateEventDto } from './dto/update-event.dto';
+
+import { EventsService } from './events.service';
+
+@Controller('events')
+export class EventsController {
+  constructor(private readonly eventsService: EventsService) {}
+
+  @Post()
+  @UseGuards(JwtAuthGuard)
+  create(@Body() dto: CreateEventDto) {
+    return this.eventsService.create(dto);
+  }
+
+  @Get()
+  findAll(
+    @Query('venueId')
+    venueId?: string,
+
+    @Query('category')
+    category?: string,
+
+    @Query('isLive')
+    isLive?: string,
+  ) {
+    let parsedIsLive: boolean | undefined;
+
+    if (isLive === 'true') {
+      parsedIsLive = true;
+    }
+
+    if (isLive === 'false') {
+      parsedIsLive = false;
+    }
+
+    return this.eventsService.findAll({
+      venueId,
+      category,
+      isLive: parsedIsLive,
+    });
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.eventsService.findOne(id);
+  }
+
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard)
+  update(@Param('id') id: string, @Body() dto: UpdateEventDto) {
+    return this.eventsService.update(id, dto);
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  remove(@Param('id') id: string) {
+    return this.eventsService.remove(id);
+  }
+}

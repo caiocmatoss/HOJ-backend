@@ -1,0 +1,190 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication } from '@nestjs/common';
+import request from 'supertest';
+import { App } from 'supertest/types';
+
+import { AppModule } from './../src/app.module';
+
+describe('HOJÉ OND Backend (e2e)', () => {
+  let app: INestApplication<App>;
+
+  let accessToken: string;
+  let userId: string;
+
+  const testEmail = `e2e-${Date.now()}@teste.com`;
+
+  const testPassword = 'Teste@123456';
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule =
+      await Test.createTestingModule({
+        imports: [AppModule],
+      }).compile();
+
+    app = moduleFixture.createNestApplication();
+
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  describe('App', () => {
+    it('GET / deve retornar Hello World!', async () => {
+      await request(app.getHttpServer())
+        .get('/')
+        .expect(200)
+        .expect('Hello World!');
+    });
+  });
+
+  describe('Auth', () => {
+    it('POST /auth/register deve criar um usuário', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          name: 'Usuário E2E',
+          email: testEmail,
+          password: testPassword,
+        })
+        .expect(201);
+
+      expect(response.body).toHaveProperty('user');
+      expect(response.body).toHaveProperty('accessToken');
+
+      expect(response.body.user).toHaveProperty('id');
+      expect(response.body.user.email).toBe(testEmail);
+      expect(response.body.user.name).toBe('Usuário E2E');
+
+      expect(response.body.user).not.toHaveProperty('passwordHash');
+
+      expect(typeof response.body.accessToken).toBe('string');
+      expect(response.body.accessToken.length).toBeGreaterThan(20);
+
+      accessToken = response.body.accessToken;
+      userId = response.body.user.id;
+    });
+
+    it('POST /auth/register não deve permitir email duplicado', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          name: 'Outro Usuário',
+          email: testEmail,
+          password: testPassword,
+        })
+        .expect(401);
+    });
+
+    it('POST /auth/login deve autenticar o usuário', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: testEmail,
+          password: testPassword,
+        })
+        .expect(201);
+
+      expect(response.body).toHaveProperty('user');
+      expect(response.body).toHaveProperty('accessToken');
+
+      expect(response.body.user.id).toBe(userId);
+      expect(response.body.user.email).toBe(testEmail);
+      expect(response.body.user.status).toBe('ONLINE');
+
+      expect(response.body.user).not.toHaveProperty('passwordHash');
+
+      expect(typeof response.body.accessToken).toBe('string');
+
+      accessToken = response.body.accessToken;
+    });
+
+    it('POST /auth/login deve rejeitar senha incorreta', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: testEmail,
+          password: 'SenhaErrada@123',
+        })
+        .expect(401);
+    });
+
+    it('POST /auth/login deve rejeitar usuário inexistente', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: `nao-existe-${Date.now()}@teste.com`,
+          password: testPassword,
+        })
+        .expect(401);
+    });
+
+    it('GET /auth/me deve rejeitar requisição sem token', async () => {
+      await request(app.getHttpServer())
+        .get('/auth/me')
+        .expect(401);
+    });
+
+    it('GET /auth/me deve rejeitar token inválido', async () => {
+      await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', 'Bearer token-invalido')
+        .expect(401);
+    });
+
+    it('GET /auth/me deve retornar o usuário autenticado', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(response.body).toHaveProperty('id');
+      expect(response.body.id).toBe(userId);
+      expect(response.body.email).toBe(testEmail);
+      expect(response.body.name).toBe('Usuário E2E');
+
+      expect(response.body).not.toHaveProperty('passwordHash');
+    });
+  });
+
+  describe('Users', () => {
+    it('GET /users/me deve rejeitar requisição sem token', async () => {
+      await request(app.getHttpServer())
+        .get('/users/me')
+        .expect(401);
+    });
+
+    it('GET /users/me deve retornar o usuário autenticado', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/users/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(response.body.id).toBe(userId);
+      expect(response.body.email).toBe(testEmail);
+      expect(response.body.name).toBe('Usuário E2E');
+
+      expect(response.body).not.toHaveProperty('passwordHash');
+    });
+
+    it('PATCH /users/me deve atualizar o perfil', async () => {
+      const response = await request(app.getHttpServer())
+        .patch('/users/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          name: 'Usuário E2E Atualizado',
+          bio: 'Perfil atualizado pelo teste E2E',
+        })
+        .expect(200);
+
+      expect(response.body.id).toBe(userId);
+      expect(response.body.name).toBe('Usuário E2E Atualizado');
+      expect(response.body.bio).toBe(
+        'Perfil atualizado pelo teste E2E',
+      );
+
+      expect(response.body).not.toHaveProperty('passwordHash');
+    });
+  });
+});

@@ -1,0 +1,567 @@
+import {
+  ConnectedSocket,
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
+
+import type { OnGatewayInit } from '@nestjs/websockets';
+
+import { JwtService } from '@nestjs/jwt';
+
+import type { Server, Socket } from 'socket.io';
+
+import { PrismaService } from '../prisma/prisma.service';
+
+import { CreateMessageDto } from './dto/create-message.dto';
+
+import { MessagesService } from './messages.service';
+
+import type { AppSocket } from '../auth/socket/socket.types';
+
+type PresenceChangedData = {
+  userId: string;
+  status: 'ONLINE' | 'OFFLINE';
+};
+
+type JwtPayload = {
+  sub: string;
+  email: string;
+};
+
+type ChatJoinPayload = {
+  groupId: string;
+};
+
+type MessageSendPayload = {
+  groupId: string;
+  text: string;
+};
+
+@WebSocketGateway({
+  cors: {
+    origin: '*',
+  },
+})
+export class MessagesGateway implements OnGatewayInit {
+  @WebSocketServer()
+  server!: Server;
+
+  private readonly userSocketCounts = new Map<string, number>();
+
+  constructor(
+    private readonly messagesService: MessagesService,
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  afterInit(server: Server): void {
+    console.log('');
+    console.log('==========================================');
+    console.log('   MESSAGES GATEWAY INICIALIZADO');
+    console.log('   PRESENCE ONLINE/OFFLINE ATIVO');
+    console.log('==========================================');
+
+    const jwtSecret = process.env.JWT_SECRET;
+
+    console.log(`JWT_SECRET existe: ${Boolean(jwtSecret)}`);
+
+    console.log(`JWT_SECRET tamanho: ${jwtSecret?.length ?? 0}`);
+
+    server.use((socket: Socket, next) => {
+      void this.authenticateSocket(socket as AppSocket, next);
+    });
+
+    server.on('connection', (socket: Socket) => {
+      void this.handleSocketConnection(socket as AppSocket);
+    });
+  }
+
+  private async authenticateSocket(
+    socket: AppSocket,
+    next: (err?: Error) => void,
+  ): Promise<void> {
+    console.log('');
+    console.log('==========================================');
+    console.log('   NOVA CONEXÃO SOCKET.IO');
+    console.log('==========================================');
+
+    console.log(`Socket ID inicial: ${socket.id}`);
+
+    try {
+      const auth = socket.handshake.auth as Record<string, unknown> | undefined;
+
+      console.log('Handshake auth recebido:', auth ? 'SIM' : 'NÃO');
+
+      const authToken = auth?.token;
+
+      console.log(
+        `Token recebido: ${typeof authToken === 'string' ? 'SIM' : 'NÃO'}`,
+      );
+
+      if (typeof authToken !== 'string' || !authToken.trim()) {
+        console.error('ERRO: token não foi enviado pelo cliente.');
+
+        next(new Error('Token não enviado.'));
+
+        return;
+      }
+
+      console.log(`Token tamanho: ${authToken.length}`);
+
+      const token = authToken.startsWith('Bearer ')
+        ? authToken.substring(7).trim()
+        : authToken.trim();
+
+      console.log(`JWT após tratamento: ${token.length} caracteres`);
+
+      let payload: JwtPayload;
+
+      try {
+        payload = await this.jwtService.verifyAsync<JwtPayload>(token);
+
+        console.log('JWT VALIDADO COM SUCESSO.');
+
+        console.log(`JWT sub: ${payload.sub}`);
+
+        console.log(`JWT email: ${payload.email}`);
+      } catch (jwtError: unknown) {
+        console.error('');
+        console.error('========== ERRO AO VALIDAR JWT ==========');
+
+        if (jwtError instanceof Error) {
+          console.error(`Nome: ${jwtError.name}`);
+
+          console.error(`Mensagem: ${jwtError.message}`);
+        } else {
+          console.error(jwtError);
+        }
+
+        console.error('==========================================');
+
+        next(new Error('JWT inválido.'));
+
+        return;
+      }
+
+      if (typeof payload.sub !== 'string' || !payload.sub.trim()) {
+        next(new Error('JWT inválido.'));
+
+        return;
+      }
+
+      const user = await this.prisma.user.findUnique({
+        where: {
+          id: payload.sub,
+        },
+
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          avatar: true,
+          bio: true,
+          status: true,
+        },
+      });
+
+      if (!user) {
+        console.error('');
+        console.error('ERRO: usuário do JWT não encontrado.');
+
+        console.error(`User ID: ${payload.sub}`);
+
+        next(new Error('Usuário não encontrado.'));
+
+        return;
+      }
+
+      console.log('');
+      console.log('USUÁRIO SOCKET AUTENTICADO:');
+
+      console.log(`ID: ${user.id}`);
+      console.log(`Nome: ${user.name}`);
+      console.log(`Email: ${user.email}`);
+
+      socket.data.user = user;
+
+      socket.data.presenceRegistered = false;
+
+      console.log('Socket autorizado com sucesso.');
+
+      console.log('==========================================');
+
+      next();
+    } catch (error: unknown) {
+      console.error('');
+      console.error('========== ERRO SOCKET.IO ==========');
+
+      if (error instanceof Error) {
+        console.error(`Nome: ${error.name}`);
+
+        console.error(`Mensagem: ${error.message}`);
+
+        console.error(error.stack);
+      } else {
+        console.error(error);
+      }
+
+      console.error('====================================');
+
+      next(new Error('Erro de autenticação Socket.IO.'));
+    }
+  }
+
+  private async handleSocketConnection(socket: AppSocket): Promise<void> {
+    const user = socket.data.user;
+
+    if (!user) {
+      console.error('[Presence] conexão sem usuário autenticado.');
+
+      return;
+    }
+
+    const currentCount = this.userSocketCounts.get(user.id) ?? 0;
+
+    const nextCount = currentCount + 1;
+
+    this.userSocketCounts.set(user.id, nextCount);
+
+    socket.data.presenceRegistered = true;
+
+    console.log('[Presence] socket conectado:', {
+      userId: user.id,
+      socketId: socket.id,
+      connections: nextCount,
+    });
+
+    if (currentCount === 0) {
+      try {
+        await this.setUserStatus(user.id, 'ONLINE');
+      } catch (error: unknown) {
+        console.error('[Presence] erro ao definir ONLINE:', error);
+      }
+    }
+
+    socket.on('disconnect', (reason: string) => {
+      void this.handleSocketDisconnect(socket, reason);
+    });
+  }
+
+  private async handleSocketDisconnect(
+    socket: AppSocket,
+    reason: string,
+  ): Promise<void> {
+    if (socket.data.presenceRegistered !== true) {
+      return;
+    }
+
+    const user = socket.data.user;
+
+    if (!user) {
+      return;
+    }
+
+    const currentCount = this.userSocketCounts.get(user.id) ?? 0;
+
+    const nextCount = Math.max(currentCount - 1, 0);
+
+    if (nextCount === 0) {
+      this.userSocketCounts.delete(user.id);
+    } else {
+      this.userSocketCounts.set(user.id, nextCount);
+    }
+
+    socket.data.presenceRegistered = false;
+
+    console.log('[Presence] socket desconectado:', {
+      userId: user.id,
+      socketId: socket.id,
+      reason,
+      remainingConnections: nextCount,
+    });
+
+    if (nextCount > 0) {
+      return;
+    }
+
+    try {
+      await this.setUserStatus(user.id, 'OFFLINE');
+    } catch (error: unknown) {
+      console.error('[Presence] erro ao definir OFFLINE:', error);
+    }
+  }
+
+  private async setUserStatus(userId: string, status: 'ONLINE' | 'OFFLINE') {
+    const user = await this.prisma.user.update({
+      where: {
+        id: userId,
+      },
+
+      data: {
+        status,
+      },
+
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatar: true,
+        bio: true,
+        status: true,
+      },
+    });
+
+    const data: PresenceChangedData = {
+      userId: user.id,
+      status,
+    };
+
+    this.server.emit('presence:changed', data);
+
+    console.log('[Presence] status atualizado:', data);
+
+    return user;
+  }
+
+  @SubscribeMessage('chat:join')
+  async handleJoin(
+    @ConnectedSocket()
+    client: AppSocket,
+
+    @MessageBody()
+    data: ChatJoinPayload,
+  ) {
+    try {
+      const user = client.data.user;
+
+      if (!user) {
+        return {
+          event: 'chat:error',
+          data: {
+            code: 'UNAUTHORIZED',
+            message: 'Usuário não autenticado no socket.',
+          },
+        };
+      }
+
+      if (!data || typeof data.groupId !== 'string' || !data.groupId.trim()) {
+        return {
+          event: 'chat:error',
+          data: {
+            code: 'INVALID_GROUP_ID',
+            message: 'groupId é obrigatório.',
+          },
+        };
+      }
+
+      const groupId = data.groupId.trim();
+
+      try {
+        await this.messagesService.findAll(user.id, groupId);
+      } catch {
+        return {
+          event: 'chat:error',
+          data: {
+            code: 'GROUP_ACCESS_DENIED',
+            message: 'Você não é membro deste grupo.',
+          },
+        };
+      }
+
+      await client.join(`group:${groupId}`);
+
+      return {
+        event: 'chat:joined',
+        data: {
+          groupId,
+        },
+      };
+    } catch {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'CHAT_JOIN_ERROR',
+          message: 'Não foi possível entrar no grupo.',
+        },
+      };
+    }
+  }
+
+  @SubscribeMessage('chat:leave')
+  async handleLeave(
+    @ConnectedSocket()
+    client: AppSocket,
+
+    @MessageBody()
+    data: ChatJoinPayload,
+  ) {
+    if (!data || typeof data.groupId !== 'string' || !data.groupId.trim()) {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'INVALID_GROUP_ID',
+          message: 'groupId é obrigatório.',
+        },
+      };
+    }
+
+    const groupId = data.groupId.trim();
+
+    await client.leave(`group:${groupId}`);
+
+    return {
+      event: 'chat:left',
+      data: {
+        groupId,
+      },
+    };
+  }
+
+  @SubscribeMessage('message:send')
+  async handleMessage(
+    @ConnectedSocket()
+    client: AppSocket,
+
+    @MessageBody()
+    data: MessageSendPayload,
+  ) {
+    const user = client.data.user;
+
+    if (!user) {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'UNAUTHORIZED',
+          message: 'Usuário não autenticado no socket.',
+        },
+      };
+    }
+
+    if (!data) {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'INVALID_MESSAGE',
+          message: 'Dados da mensagem são obrigatórios.',
+        },
+      };
+    }
+
+    if (typeof data.groupId !== 'string' || !data.groupId.trim()) {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'INVALID_GROUP_ID',
+          message: 'groupId é obrigatório.',
+        },
+      };
+    }
+
+    if (typeof data.text !== 'string') {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'INVALID_TEXT',
+          message: 'text deve ser uma string.',
+        },
+      };
+    }
+
+    const groupId = data.groupId.trim();
+
+    const text = data.text.trim();
+
+    if (!text) {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'EMPTY_MESSAGE',
+          message: 'A mensagem não pode estar vazia.',
+        },
+      };
+    }
+
+    if (text.length > 2000) {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'MESSAGE_TOO_LONG',
+          message: 'A mensagem não pode ter mais de 2000 caracteres.',
+        },
+      };
+    }
+
+    try {
+      await this.messagesService.findAll(user.id, groupId);
+
+      const dto: CreateMessageDto = {
+        text,
+      };
+
+      const message = await this.messagesService.create(user.id, groupId, dto);
+
+      this.server.to(`group:${groupId}`).emit('message:new', message);
+
+      return {
+        event: 'message:sent',
+        data: message,
+      };
+    } catch {
+      return {
+        event: 'chat:error',
+        data: {
+          code: 'MESSAGE_SEND_ERROR',
+          message: 'Não foi possível enviar a mensagem.',
+        },
+      };
+    }
+  }
+
+  @SubscribeMessage('presence:get')
+  async handleGetPresence(
+    @ConnectedSocket()
+    client: AppSocket,
+  ) {
+    const user = client.data.user;
+
+    if (!user) {
+      return {
+        event: 'presence:error',
+        data: {
+          code: 'UNAUTHORIZED',
+          message: 'Usuário não autenticado no socket.',
+        },
+      };
+    }
+
+    try {
+      const users = await this.prisma.user.findMany({
+        select: {
+          id: true,
+          status: true,
+        },
+
+        orderBy: {
+          name: 'asc',
+        },
+      });
+
+      return {
+        event: 'presence:list',
+        data: users,
+      };
+    } catch (error: unknown) {
+      console.error('[Presence] erro ao buscar presença:', error);
+
+      return {
+        event: 'presence:error',
+        data: {
+          code: 'PRESENCE_LIST_ERROR',
+          message: 'Não foi possível carregar a presença dos usuários.',
+        },
+      };
+    }
+  }
+}
