@@ -310,4 +310,25 @@ export class GroupsService {
       message: 'Membro removido do grupo.',
     };
   }
+
+  async remove(requesterId: string, groupId: string) {
+    return this.prisma.$transaction(async (transaction) => {
+      const group = await transaction.group.findUnique({
+        where: { id: groupId },
+        select: { id: true, creatorId: true },
+      });
+
+      if (!group) {
+        throw new NotFoundException('Grupo não encontrado.');
+      }
+
+      if (group.creatorId !== requesterId) {
+        throw new ConflictException('Somente o criador pode excluir o grupo.');
+      }
+
+      await transaction.group.delete({ where: { id: groupId } });
+
+      return { message: 'Grupo excluído com sucesso.' };
+    });
+  }
 }

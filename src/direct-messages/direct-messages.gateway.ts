@@ -33,12 +33,20 @@ type DirectJoinPayload = {
 };
 
 type DirectSendPayload = {
-  userId: string;
+  receiverId: string;
   text: string;
 };
 
-function getDirectRoom(userA: string, userB: string): string {
-  return [userA, userB].sort().join(':');
+type DirectChatResponse = {
+  event: string;
+  data: unknown;
+};
+
+function getDirectRoom(
+  userA: string,
+  userB: string,
+): string {
+  return `direct:${[userA, userB].sort().join(':')}`;
 }
 
 @WebSocketGateway({
@@ -57,10 +65,27 @@ export class DirectMessagesGateway implements OnGatewayInit {
   ) {}
 
   afterInit(server: Server): void {
-    console.log('[DirectMessages] Gateway inicializado.');
+    console.log('');
+    console.log('==========================================');
+    console.log('   DIRECT MESSAGES GATEWAY INICIALIZADO');
+    console.log('   CHAT PRIVADO ATIVO');
+    console.log('==========================================');
+
+    const jwtSecret = process.env.JWT_SECRET;
+
+    console.log(
+      `JWT_SECRET existe: ${Boolean(jwtSecret)}`,
+    );
+
+    console.log(
+      `JWT_SECRET tamanho: ${jwtSecret?.length ?? 0}`,
+    );
 
     server.use((socket, next) => {
-      void this.authenticateSocket(socket as AppSocket, next);
+      void this.authenticateSocket(
+        socket as AppSocket,
+        next,
+      );
     });
   }
 
@@ -68,53 +93,219 @@ export class DirectMessagesGateway implements OnGatewayInit {
     socket: AppSocket,
     next: (err?: Error) => void,
   ): Promise<void> {
+    console.log('');
+    console.log('==========================================');
+    console.log('   NOVA CONEXÃO DIRECT SOCKET.IO');
+    console.log('==========================================');
+
+    console.log(
+      `Socket ID: ${socket.id}`,
+    );
+
     try {
-      const auth = socket.handshake.auth as Record<string, unknown> | undefined;
+      const auth =
+        socket.handshake.auth as
+          | Record<string, unknown>
+          | undefined;
 
-      const authToken = auth?.token;
+      console.log(
+        'Handshake auth recebido:',
+        auth ? 'SIM' : 'NÃO',
+      );
 
-      if (typeof authToken !== 'string' || !authToken.trim()) {
-        next(new Error('Token não enviado.'));
+      const authToken =
+        auth?.token;
+
+      console.log(
+        `Token recebido: ${
+          typeof authToken === 'string'
+            ? 'SIM'
+            : 'NÃO'
+        }`,
+      );
+
+      if (
+        typeof authToken !== 'string' ||
+        !authToken.trim()
+      ) {
+        console.error(
+          '[DirectMessages] Token não enviado.',
+        );
+
+        next(
+          new Error(
+            'Token não enviado.',
+          ),
+        );
+
         return;
       }
 
-      const token = authToken.startsWith('Bearer ')
-        ? authToken.substring(7).trim()
-        : authToken.trim();
+      const token =
+        authToken.startsWith('Bearer ')
+          ? authToken
+              .substring(7)
+              .trim()
+          : authToken.trim();
 
-      const payload = await this.jwtService.verifyAsync<JwtPayload>(token);
+      console.log(
+        `JWT após tratamento: ${token.length} caracteres`,
+      );
 
-      if (typeof payload.sub !== 'string' || !payload.sub.trim()) {
-        next(new Error('JWT inválido.'));
+      let payload: JwtPayload;
+
+      try {
+        payload =
+          await this.jwtService.verifyAsync<JwtPayload>(
+            token,
+          );
+
+        console.log(
+          '[DirectMessages] JWT validado com sucesso.',
+        );
+
+        console.log(
+          `JWT sub: ${payload.sub}`,
+        );
+
+        console.log(
+          `JWT email: ${payload.email}`,
+        );
+      } catch (
+        jwtError: unknown
+      ) {
+        console.error(
+          '[DirectMessages] Erro ao validar JWT:',
+        );
+
+        if (
+          jwtError instanceof Error
+        ) {
+          console.error(
+            `Nome: ${jwtError.name}`,
+          );
+
+          console.error(
+            `Mensagem: ${jwtError.message}`,
+          );
+        } else {
+          console.error(
+            jwtError,
+          );
+        }
+
+        next(
+          new Error(
+            'JWT inválido.',
+          ),
+        );
+
         return;
       }
 
-      const user = await this.prisma.user.findUnique({
-        where: {
-          id: payload.sub,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          avatar: true,
-          bio: true,
-          status: true,
-        },
-      });
+      if (
+        typeof payload.sub !== 'string' ||
+        !payload.sub.trim()
+      ) {
+        next(
+          new Error(
+            'JWT inválido.',
+          ),
+        );
+
+        return;
+      }
+
+      const user =
+        await this.prisma.user.findUnique({
+          where: {
+            id: payload.sub,
+          },
+
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatar: true,
+            bio: true,
+            status: true,
+          },
+        });
 
       if (!user) {
-        next(new Error('Usuário não encontrado.'));
+        console.error(
+          '[DirectMessages] Usuário do JWT não encontrado.',
+        );
+
+        console.error(
+          `User ID: ${payload.sub}`,
+        );
+
+        next(
+          new Error(
+            'Usuário não encontrado.',
+          ),
+        );
+
         return;
       }
 
-      socket.data.user = user;
+      socket.data.user =
+        user;
+
+      console.log(
+        '[DirectMessages] Usuário autenticado:',
+      );
+
+      console.log(
+        `ID: ${user.id}`,
+      );
+
+      console.log(
+        `Nome: ${user.name}`,
+      );
+
+      console.log(
+        `Email: ${user.email}`,
+      );
+
+      console.log(
+        '[DirectMessages] Socket autorizado.',
+      );
+
+      console.log(
+        '==========================================',
+      );
 
       next();
-    } catch (error: unknown) {
-      console.error('[DirectMessages] Erro de autenticação:', error);
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        '[DirectMessages] Erro de autenticação:',
+      );
 
-      next(new Error('Não autorizado.'));
+      if (
+        error instanceof Error
+      ) {
+        console.error(
+          error.message,
+        );
+
+        console.error(
+          error.stack,
+        );
+      } else {
+        console.error(
+          error,
+        );
+      }
+
+      next(
+        new Error(
+          'Erro de autenticação Socket.IO.',
+        ),
+      );
     }
   }
 
@@ -125,37 +316,55 @@ export class DirectMessagesGateway implements OnGatewayInit {
 
     @MessageBody()
     data: DirectJoinPayload,
-  ) {
-    const currentUser = client.data.user;
+  ): Promise<DirectChatResponse> {
+    const currentUser =
+      client.data.user;
 
     if (!currentUser) {
       return {
-        event: 'direct:error',
+        event: 'direct:chat:error',
+
         data: {
           code: 'UNAUTHORIZED',
-          message: 'Usuário não autenticado.',
+
+          message:
+            'Usuário não autenticado no socket.',
         },
       };
     }
 
-    if (!data || typeof data.userId !== 'string' || !data.userId.trim()) {
+    if (
+      !data ||
+      typeof data.userId !== 'string' ||
+      !data.userId.trim()
+    ) {
       return {
-        event: 'direct:error',
+        event: 'direct:chat:error',
+
         data: {
           code: 'INVALID_USER_ID',
-          message: 'userId é obrigatório.',
+
+          message:
+            'userId é obrigatório.',
         },
       };
     }
 
-    const otherUserId = data.userId.trim();
+    const otherUserId =
+      data.userId.trim();
 
-    if (otherUserId === currentUser.id) {
+    if (
+      otherUserId === currentUser.id
+    ) {
       return {
-        event: 'direct:error',
+        event: 'direct:chat:error',
+
         data: {
-          code: 'INVALID_CONVERSATION',
-          message: 'Não é possível conversar com você mesmo.',
+          code:
+            'INVALID_CONVERSATION',
+
+          message:
+            'Não é possível conversar com você mesmo.',
         },
       };
     }
@@ -166,25 +375,56 @@ export class DirectMessagesGateway implements OnGatewayInit {
         otherUserId,
       );
 
-      const room = getDirectRoom(currentUser.id, otherUserId);
+      const room =
+        getDirectRoom(
+          currentUser.id,
+          otherUserId,
+        );
 
-      await client.join(room);
+      await client.join(
+        room,
+      );
 
-      console.log('[DirectMessages] Usuário entrou na conversa:', room);
+      console.log(
+        '[DirectMessages] Usuário entrou na conversa:',
+        {
+          userId:
+            currentUser.id,
+
+          otherUserId,
+
+          room,
+
+          socketId:
+            client.id,
+        },
+      );
 
       return {
-        event: 'direct:joined',
+        event:
+          'direct:chat:joined',
+
         data: {
-          userId: otherUserId,
+          userId:
+            otherUserId,
         },
       };
-    } catch (error: unknown) {
-      console.error('[DirectMessages] Erro ao entrar:', error);
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        '[DirectMessages] Erro ao entrar na conversa:',
+        error,
+      );
 
       return {
-        event: 'direct:error',
+        event:
+          'direct:chat:error',
+
         data: {
-          code: 'DIRECT_JOIN_ERROR',
+          code:
+            'DIRECT_JOIN_ERROR',
+
           message:
             error instanceof Error
               ? error.message
@@ -201,149 +441,291 @@ export class DirectMessagesGateway implements OnGatewayInit {
 
     @MessageBody()
     data: DirectJoinPayload,
-  ) {
-    const currentUser = client.data.user;
+  ): Promise<DirectChatResponse> {
+    const currentUser =
+      client.data.user;
+
+    if (!currentUser) {
+      return {
+        event:
+          'direct:chat:error',
+
+        data: {
+          code:
+            'UNAUTHORIZED',
+
+          message:
+            'Usuário não autenticado no socket.',
+        },
+      };
+    }
 
     if (
-      !currentUser ||
       !data ||
       typeof data.userId !== 'string' ||
       !data.userId.trim()
     ) {
       return {
-        event: 'direct:error',
+        event:
+          'direct:chat:error',
+
         data: {
-          code: 'INVALID_USER_ID',
-          message: 'userId é obrigatório.',
+          code:
+            'INVALID_USER_ID',
+
+          message:
+            'userId é obrigatório.',
         },
       };
     }
 
-    const otherUserId = data.userId.trim();
+    const otherUserId =
+      data.userId.trim();
 
-    const room = getDirectRoom(currentUser.id, otherUserId);
+    const room =
+      getDirectRoom(
+        currentUser.id,
+        otherUserId,
+      );
 
-    await client.leave(room);
+    await client.leave(
+      room,
+    );
+
+    console.log(
+      '[DirectMessages] Usuário saiu da conversa:',
+      {
+        userId:
+          currentUser.id,
+
+        otherUserId,
+
+        room,
+
+        socketId:
+          client.id,
+      },
+    );
 
     return {
-      event: 'direct:left',
+      event:
+        'direct:chat:left',
+
       data: {
-        userId: otherUserId,
+        userId:
+          otherUserId,
       },
     };
   }
 
-  @SubscribeMessage('direct:send')
+  @SubscribeMessage('direct:message:send')
   async handleSend(
     @ConnectedSocket()
     client: AppSocket,
 
     @MessageBody()
     data: DirectSendPayload,
-  ) {
-    const currentUser = client.data.user;
+  ): Promise<DirectChatResponse> {
+    const currentUser =
+      client.data.user;
 
     if (!currentUser) {
       return {
-        event: 'direct:error',
+        event:
+          'direct:chat:error',
+
         data: {
-          code: 'UNAUTHORIZED',
-          message: 'Usuário não autenticado.',
+          code:
+            'UNAUTHORIZED',
+
+          message:
+            'Usuário não autenticado no socket.',
         },
       };
     }
 
     if (!data) {
       return {
-        event: 'direct:error',
+        event:
+          'direct:chat:error',
+
         data: {
-          code: 'INVALID_MESSAGE',
-          message: 'Dados da mensagem são obrigatórios.',
+          code:
+            'INVALID_MESSAGE',
+
+          message:
+            'Dados da mensagem são obrigatórios.',
         },
       };
     }
 
-    if (typeof data.userId !== 'string' || !data.userId.trim()) {
+    if (
+      typeof data.receiverId !== 'string' ||
+      !data.receiverId.trim()
+    ) {
       return {
-        event: 'direct:error',
+        event:
+          'direct:chat:error',
+
         data: {
-          code: 'INVALID_USER_ID',
-          message: 'userId é obrigatório.',
+          code:
+            'INVALID_RECEIVER_ID',
+
+          message:
+            'receiverId é obrigatório.',
         },
       };
     }
 
-    if (typeof data.text !== 'string') {
+    if (
+      typeof data.text !== 'string'
+    ) {
       return {
-        event: 'direct:error',
+        event:
+          'direct:chat:error',
+
         data: {
-          code: 'INVALID_TEXT',
-          message: 'text deve ser uma string.',
+          code:
+            'INVALID_TEXT',
+
+          message:
+            'text deve ser uma string.',
         },
       };
     }
 
-    const receiverId = data.userId.trim();
+    const receiverId =
+      data.receiverId.trim();
 
-    const text = data.text.trim();
+    const text =
+      data.text.trim();
+
+    if (
+      receiverId ===
+      currentUser.id
+    ) {
+      return {
+        event:
+          'direct:chat:error',
+
+        data: {
+          code:
+            'INVALID_CONVERSATION',
+
+          message:
+            'Não é possível enviar mensagem para você mesmo.',
+        },
+      };
+    }
 
     if (!text) {
       return {
-        event: 'direct:error',
+        event:
+          'direct:chat:error',
+
         data: {
-          code: 'EMPTY_MESSAGE',
-          message: 'A mensagem não pode estar vazia.',
+          code:
+            'EMPTY_MESSAGE',
+
+          message:
+            'A mensagem não pode estar vazia.',
         },
       };
     }
 
-    if (text.length > 2000) {
+    if (
+      text.length > 2000
+    ) {
       return {
-        event: 'direct:error',
+        event:
+          'direct:chat:error',
+
         data: {
-          code: 'MESSAGE_TOO_LONG',
-          message: 'A mensagem não pode ter mais de 2000 caracteres.',
+          code:
+            'MESSAGE_TOO_LONG',
+
+          message:
+            'A mensagem não pode ter mais de 2000 caracteres.',
         },
       };
     }
 
     try {
-      const message = await this.directMessagesService.create(
-        currentUser.id,
-        receiverId,
+      const message =
+        await this.directMessagesService.create(
+          currentUser.id,
+          receiverId,
+          {
+            text,
+          },
+        );
+
+      const room =
+        getDirectRoom(
+          currentUser.id,
+          receiverId,
+        );
+
+      /*
+       * Envia a nova mensagem para
+       * todos os sockets que estão
+       * dentro da conversa.
+       */
+      this.server
+        .to(room)
+        .emit(
+          'direct:message:new',
+          message,
+        );
+
+      console.log(
+        '[DirectMessages] direct:message:new emitido:',
         {
-          text,
+          messageId:
+            message.id,
+
+          senderId:
+            message.senderId,
+
+          receiverId:
+            message.receiverId,
+
+          room,
         },
       );
 
-      const room = getDirectRoom(currentUser.id, receiverId);
+      /*
+       * Resposta para quem enviou.
+       */
+      return {
+        event:
+          'direct:message:sent',
 
-      this.server.to(room).emit('direct:new', message);
-
-      console.log('[DirectMessages] direct:new:', message.id);
+        data:
+          message,
+      };
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        '[DirectMessages] Erro ao enviar mensagem:',
+        error,
+      );
 
       return {
-        event: 'direct:sent',
-        data: message,
-      };
-    } catch (error: unknown) {
-      console.error('[DirectMessages] Erro ao enviar:', error);
+        event:
+          'direct:chat:error',
 
-      const response: {
-        event: string;
-        data: ChatErrorData;
-      } = {
-        event: 'direct:error',
         data: {
-          code: 'DIRECT_SEND_ERROR',
+          code:
+            'DIRECT_SEND_ERROR',
+
           message:
             error instanceof Error
               ? error.message
               : 'Não foi possível enviar a mensagem.',
         },
       };
-
-      return response;
     }
   }
 }

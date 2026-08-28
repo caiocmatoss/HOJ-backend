@@ -11,27 +11,32 @@ import {
   MinLength,
 } from 'class-validator';
 
-export class CreateVenueDto {
+export class UpdateVenueDto {
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(150)
-  name: string;
+  name?: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(100)
-  category: string;
+  category?: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(2)
   @MaxLength(300)
-  address: string;
+  address?: string;
 
+  @IsOptional()
   @IsLatitude()
-  latitude: number;
+  latitude?: number;
 
+  @IsOptional()
   @IsLongitude()
-  longitude: number;
+  longitude?: number;
 
   @IsOptional()
   @IsInt()

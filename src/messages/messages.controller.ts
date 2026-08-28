@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Get,
@@ -54,45 +54,5 @@ export class MessagesController {
     groupId: string,
   ) {
     return this.messagesService.findAll(request.user.id, groupId);
-  }
-
-  @Get('users/messages/conversations')
-  findDirectConversations(
-    @Req()
-    request: AuthenticatedRequest,
-  ) {
-    return this.messagesService.findDirectConversations(request.user.id);
-  }
-
-  @Post('users/:id/messages')
-  createDirectMessage(
-    @Req()
-    request: AuthenticatedRequest,
-
-    @Param('id')
-    receiverId: string,
-
-    @Body()
-    dto: CreateMessageDto,
-  ) {
-    return this.messagesService.createDirectMessage(
-      request.user.id,
-      receiverId,
-      dto,
-    );
-  }
-
-  @Get('users/:id/messages')
-  findDirectMessages(
-    @Req()
-    request: AuthenticatedRequest,
-
-    @Param('id')
-    otherUserId: string,
-  ) {
-    return this.messagesService.findDirectMessages(
-      request.user.id,
-      otherUserId,
-    );
   }
 }

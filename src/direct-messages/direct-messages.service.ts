@@ -1,4 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -6,40 +9,57 @@ import { SendDirectMessageDto } from './dto/send-direct-message.dto';
 
 @Injectable()
 export class DirectMessagesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+  ) {}
 
-  private async ensureUserExists(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        avatar: true,
-        bio: true,
-        status: true,
-      },
-    });
+  private async ensureUserExists(
+    userId: string,
+  ) {
+    const user =
+      await this.prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          avatar: true,
+          bio: true,
+          status: true,
+        },
+      });
 
     if (!user) {
-      throw new NotFoundException('Usuário não encontrado.');
+      throw new NotFoundException(
+        'Usuário não encontrado.',
+      );
     }
 
     return user;
   }
 
-  private async ensureConversationUsers(senderId: string, receiverId: string) {
-    if (senderId === receiverId) {
+  private async ensureConversationUsers(
+    senderId: string,
+    receiverId: string,
+  ) {
+    if (
+      senderId === receiverId
+    ) {
       throw new NotFoundException(
         'Não é possível enviar mensagem para você mesmo.',
       );
     }
 
-    await this.ensureUserExists(senderId);
+    await this.ensureUserExists(
+      senderId,
+    );
 
-    await this.ensureUserExists(receiverId);
+    await this.ensureUserExists(
+      receiverId,
+    );
   }
 
   async create(
@@ -47,15 +67,23 @@ export class DirectMessagesService {
     receiverId: string,
     dto: SendDirectMessageDto,
   ) {
-    await this.ensureConversationUsers(senderId, receiverId);
+    await this.ensureConversationUsers(
+      senderId,
+      receiverId,
+    );
 
-    const text = dto.text.trim();
+    const text =
+      dto.text.trim();
 
     if (!text) {
-      throw new NotFoundException('A mensagem não pode estar vazia.');
+      throw new NotFoundException(
+        'A mensagem não pode estar vazia.',
+      );
     }
 
-    if (text.length > 2000) {
+    if (
+      text.length > 2000
+    ) {
       throw new NotFoundException(
         'A mensagem não pode ter mais de 2000 caracteres.',
       );
@@ -90,18 +118,27 @@ export class DirectMessagesService {
     });
   }
 
-  async findConversation(userId: string, otherUserId: string) {
-    await this.ensureConversationUsers(userId, otherUserId);
+  async findConversation(
+    userId: string,
+    otherUserId: string,
+  ) {
+    await this.ensureConversationUsers(
+      userId,
+      otherUserId,
+    );
 
     return this.prisma.directMessage.findMany({
       where: {
         OR: [
           {
             senderId: userId,
-            receiverId: otherUserId,
+            receiverId:
+              otherUserId,
           },
+
           {
-            senderId: otherUserId,
+            senderId:
+              otherUserId,
             receiverId: userId,
           },
         ],

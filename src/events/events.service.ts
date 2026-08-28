@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -8,6 +12,35 @@ import { UpdateEventDto } from './dto/update-event.dto';
 @Injectable()
 export class EventsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private readonly venueListSelect = {
+    id: true,
+    name: true,
+    category: true,
+    address: true,
+    latitude: true,
+    longitude: true,
+    image: true,
+    rating: true,
+    status: true,
+  } as const;
+
+  private readonly venueDetailSelect = {
+    id: true,
+    name: true,
+    category: true,
+    address: true,
+    latitude: true,
+    longitude: true,
+    occupancy: true,
+    description: true,
+    image: true,
+    rating: true,
+    dj: true,
+    promotion: true,
+    playlist: true,
+    status: true,
+  } as const;
 
   async create(dto: CreateEventDto) {
     const venue = await this.prisma.venue.findUnique({
@@ -23,19 +56,19 @@ export class EventsService {
     const eventDate = new Date(dto.date);
 
     if (Number.isNaN(eventDate.getTime())) {
-      throw new Error('Data do evento inválida.');
+      throw new BadRequestException('Data do evento inválida.');
     }
 
     return this.prisma.event.create({
       data: {
-        title: dto.title,
-        image: dto.image,
+        title: dto.title.trim(),
+        image: dto.image?.trim(),
         venueId: dto.venueId,
-        venueName: dto.venueName ?? venue.name,
+        venueName: dto.venueName?.trim() || venue.name,
         date: eventDate,
         time: dto.time,
-        category: dto.category,
-        description: dto.description,
+        category: dto.category.trim(),
+        description: dto.description?.trim(),
         price: dto.price,
         attendees: dto.attendees ?? 0,
         isLive: dto.isLive ?? false,
@@ -43,17 +76,7 @@ export class EventsService {
 
       include: {
         venue: {
-          select: {
-            id: true,
-            name: true,
-            category: true,
-            address: true,
-            latitude: true,
-            longitude: true,
-            image: true,
-            rating: true,
-            status: true,
-          },
+          select: this.venueListSelect,
         },
       },
     });
@@ -87,17 +110,7 @@ export class EventsService {
 
       include: {
         venue: {
-          select: {
-            id: true,
-            name: true,
-            category: true,
-            address: true,
-            latitude: true,
-            longitude: true,
-            image: true,
-            rating: true,
-            status: true,
-          },
+          select: this.venueListSelect,
         },
       },
 
@@ -120,22 +133,7 @@ export class EventsService {
 
       include: {
         venue: {
-          select: {
-            id: true,
-            name: true,
-            category: true,
-            address: true,
-            latitude: true,
-            longitude: true,
-            occupancy: true,
-            description: true,
-            image: true,
-            rating: true,
-            dj: true,
-            promotion: true,
-            playlist: true,
-            status: true,
-          },
+          select: this.venueDetailSelect,
         },
       },
     });
@@ -158,7 +156,7 @@ export class EventsService {
       throw new NotFoundException('Evento não encontrado.');
     }
 
-    let venueName = data.venueName;
+    let venueName: string | null | undefined = data.venueName;
 
     if (data.venueId !== undefined) {
       const venue = await this.prisma.venue.findUnique({
@@ -171,11 +169,6 @@ export class EventsService {
         throw new NotFoundException('Local não encontrado.');
       }
 
-      /*
-       * Se o local mudou e o nome do local
-       * não foi enviado manualmente, usamos
-       * automaticamente o novo nome.
-       */
       if (data.venueName === undefined) {
         venueName = venue.name;
       }
@@ -187,7 +180,7 @@ export class EventsService {
       eventDate = new Date(data.date);
 
       if (Number.isNaN(eventDate.getTime())) {
-        throw new Error('Data do evento inválida.');
+        throw new BadRequestException('Data do evento inválida.');
       }
     }
 
@@ -199,13 +192,13 @@ export class EventsService {
       data: {
         ...(data.title !== undefined
           ? {
-              title: data.title,
+              title: data.title.trim(),
             }
           : {}),
 
         ...(data.image !== undefined
           ? {
-              image: data.image,
+              image: data.image?.trim() || null,
             }
           : {}),
 
@@ -217,7 +210,7 @@ export class EventsService {
 
         ...(venueName !== undefined
           ? {
-              venueName,
+              venueName: venueName === null ? null : venueName.trim() || null,
             }
           : {}),
 
@@ -235,13 +228,13 @@ export class EventsService {
 
         ...(data.category !== undefined
           ? {
-              category: data.category,
+              category: data.category.trim(),
             }
           : {}),
 
         ...(data.description !== undefined
           ? {
-              description: data.description,
+              description: data.description?.trim() || null,
             }
           : {}),
 
@@ -266,17 +259,7 @@ export class EventsService {
 
       include: {
         venue: {
-          select: {
-            id: true,
-            name: true,
-            category: true,
-            address: true,
-            latitude: true,
-            longitude: true,
-            image: true,
-            rating: true,
-            status: true,
-          },
+          select: this.venueListSelect,
         },
       },
     });

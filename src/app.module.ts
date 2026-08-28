@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -17,6 +17,7 @@ import { LocationsModule } from './locations/locations.module';
 import { CheckinsModule } from './checkins/checkins.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
+import { PresenceModule } from './presence/presence.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { FavoritesModule } from './favorites/favorites.module';
     CheckinsModule,
     NotificationsModule,
     FavoritesModule,
+    PresenceModule,
   ],
 
   controllers: [AppController],
@@ -41,3 +43,4 @@ import { FavoritesModule } from './favorites/favorites.module';
   providers: [AppService],
 })
 export class AppModule {}
+

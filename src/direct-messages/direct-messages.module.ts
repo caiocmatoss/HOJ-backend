@@ -10,12 +10,23 @@ import { DirectMessagesGateway } from './direct-messages.gateway';
 import { DirectMessagesService } from './direct-messages.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, JwtModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    JwtModule,
+  ],
 
-  controllers: [DirectMessagesController],
+  controllers: [
+    DirectMessagesController,
+  ],
 
-  providers: [DirectMessagesService, DirectMessagesGateway],
+  providers: [
+    DirectMessagesService,
+    DirectMessagesGateway,
+  ],
 
-  exports: [DirectMessagesService],
+  exports: [
+    DirectMessagesService,
+  ],
 })
 export class DirectMessagesModule {}

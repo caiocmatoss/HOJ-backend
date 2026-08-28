@@ -14,7 +14,6 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
-
 import { EventsService } from './events.service';
 
 @Controller('events')
@@ -29,14 +28,9 @@ export class EventsController {
 
   @Get()
   findAll(
-    @Query('venueId')
-    venueId?: string,
-
-    @Query('category')
-    category?: string,
-
-    @Query('isLive')
-    isLive?: string,
+    @Query('venueId') venueId?: string,
+    @Query('category') category?: string,
+    @Query('isLive') isLive?: string,
   ) {
     let parsedIsLive: boolean | undefined;
 

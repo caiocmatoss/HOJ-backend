@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 
 import request from 'supertest';
+import { App } from 'supertest/types';
 
 import { AppModule } from './../src/app.module';
 
@@ -76,7 +77,7 @@ interface DeleteResponse {
 }
 
 describe('HOJÉ OND Backend (e2e)', () => {
-  let app: INestApplication;
+  let app: INestApplication<App>;
 
   let accessToken: string;
   let userId: string;
@@ -98,18 +99,23 @@ describe('HOJÉ OND Backend (e2e)', () => {
     await app.close();
   });
 
+  function httpServer(): App {
+    return app.getHttpServer();
+  }
+
+  function api() {
+    return request(httpServer());
+  }
+
   describe('App', () => {
     it('GET / deve retornar Hello World!', async () => {
-      await request(app.getHttpServer())
-        .get('/')
-        .expect(200)
-        .expect('Hello World!');
+      await api().get('/').expect(200).expect('Hello World!');
     });
   });
 
   describe('Auth', () => {
     it('POST /auth/register deve criar um usuário', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .post('/auth/register')
         .send({
           name: 'Usuário E2E',
@@ -137,7 +143,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('POST /auth/register não deve permitir email duplicado', async () => {
-      await request(app.getHttpServer())
+      await api()
         .post('/auth/register')
         .send({
           name: 'Outro Usuário',
@@ -148,7 +154,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('POST /auth/login deve autenticar o usuário', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .post('/auth/login')
         .send({
           email: testEmail,
@@ -173,7 +179,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('POST /auth/login deve rejeitar senha incorreta', async () => {
-      await request(app.getHttpServer())
+      await api()
         .post('/auth/login')
         .send({
           email: testEmail,
@@ -183,7 +189,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('POST /auth/login deve rejeitar usuário inexistente', async () => {
-      await request(app.getHttpServer())
+      await api()
         .post('/auth/login')
         .send({
           email: `nao-existe-${Date.now()}@teste.com`,
@@ -193,18 +199,18 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('GET /auth/me deve rejeitar requisição sem token', async () => {
-      await request(app.getHttpServer()).get('/auth/me').expect(401);
+      await api().get('/auth/me').expect(401);
     });
 
     it('GET /auth/me deve rejeitar token inválido', async () => {
-      await request(app.getHttpServer())
+      await api()
         .get('/auth/me')
         .set('Authorization', 'Bearer token-invalido')
         .expect(401);
     });
 
     it('GET /auth/me deve retornar o usuário autenticado', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .get('/auth/me')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
@@ -222,11 +228,11 @@ describe('HOJÉ OND Backend (e2e)', () => {
 
   describe('Users', () => {
     it('GET /users/me deve rejeitar requisição sem token', async () => {
-      await request(app.getHttpServer()).get('/users/me').expect(401);
+      await api().get('/users/me').expect(401);
     });
 
     it('GET /users/me deve retornar o usuário autenticado', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .get('/users/me')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
@@ -241,7 +247,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('PATCH /users/me deve atualizar o perfil', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .patch('/users/me')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -266,7 +272,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     let eventId: string;
 
     it('POST /venues deve criar um local para os testes de eventos', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .post('/venues')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -290,7 +296,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('POST /venues deve criar um segundo local para testar atualização', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .post('/venues')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -310,7 +316,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('POST /events deve rejeitar criação sem JWT', async () => {
-      await request(app.getHttpServer())
+      await api()
         .post('/events')
         .send({
           title: 'Evento sem autenticação',
@@ -323,7 +329,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('POST /events deve criar um evento autenticado', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .post('/events')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -354,9 +360,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('GET /events deve listar os eventos', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/events')
-        .expect(200);
+      const response = await api().get('/events').expect(200);
 
       const body = response.body as EventResponse[];
 
@@ -369,7 +373,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('GET /events deve filtrar por venueId', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .get(`/events?venueId=${venueId}`)
         .expect(200);
 
@@ -384,9 +388,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('GET /events deve filtrar por category', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/events?category=Show')
-        .expect(200);
+      const response = await api().get('/events?category=Show').expect(200);
 
       const body = response.body as EventResponse[];
 
@@ -398,9 +400,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('GET /events deve filtrar por isLive=true', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/events?isLive=true')
-        .expect(200);
+      const response = await api().get('/events?isLive=true').expect(200);
 
       const body = response.body as EventResponse[];
 
@@ -414,9 +414,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('GET /events deve filtrar por isLive=false', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/events?isLive=false')
-        .expect(200);
+      const response = await api().get('/events?isLive=false').expect(200);
 
       const body = response.body as EventResponse[];
 
@@ -428,9 +426,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('GET /events/:id deve retornar o evento com o local', async () => {
-      const response = await request(app.getHttpServer())
-        .get(`/events/${eventId}`)
-        .expect(200);
+      const response = await api().get(`/events/${eventId}`).expect(200);
 
       const body = response.body as EventResponse;
 
@@ -445,13 +441,11 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('GET /events/:id deve retornar 404 para evento inexistente', async () => {
-      await request(app.getHttpServer())
-        .get('/events/evento-que-nao-existe')
-        .expect(404);
+      await api().get('/events/evento-que-nao-existe').expect(404);
     });
 
     it('POST /events deve retornar 404 para venue inexistente', async () => {
-      await request(app.getHttpServer())
+      await api()
         .post('/events')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -465,7 +459,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('PATCH /events/:id deve atualizar o evento', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .patch(`/events/${eventId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -488,7 +482,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('PATCH /events/:id deve atualizar o venue e seu nome automaticamente', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .patch(`/events/${eventId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -505,7 +499,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('PATCH /events/:id deve rejeitar atualização sem JWT', async () => {
-      await request(app.getHttpServer())
+      await api()
         .patch(`/events/${eventId}`)
         .send({
           title: 'Tentativa sem autenticação',
@@ -514,7 +508,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('PATCH /events/:id deve retornar 404 para evento inexistente', async () => {
-      await request(app.getHttpServer())
+      await api()
         .patch('/events/evento-que-nao-existe')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -524,7 +518,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('PATCH /events/:id deve retornar 404 ao trocar para venue inexistente', async () => {
-      await request(app.getHttpServer())
+      await api()
         .patch(`/events/${eventId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .send({
@@ -534,13 +528,11 @@ describe('HOJÉ OND Backend (e2e)', () => {
     });
 
     it('DELETE /events/:id deve rejeitar remoção sem JWT', async () => {
-      await request(app.getHttpServer())
-        .delete(`/events/${eventId}`)
-        .expect(401);
+      await api().delete(`/events/${eventId}`).expect(401);
     });
 
     it('DELETE /events/:id deve remover o evento', async () => {
-      const response = await request(app.getHttpServer())
+      const response = await api()
         .delete(`/events/${eventId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
@@ -549,11 +541,11 @@ describe('HOJÉ OND Backend (e2e)', () => {
 
       expect(body.message).toBe('Evento removido com sucesso.');
 
-      await request(app.getHttpServer()).get(`/events/${eventId}`).expect(404);
+      await api().get(`/events/${eventId}`).expect(404);
     });
 
     it('DELETE /events/:id deve retornar 404 para evento inexistente', async () => {
-      await request(app.getHttpServer())
+      await api()
         .delete('/events/evento-que-nao-existe')
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(404);

@@ -41,6 +41,11 @@ export class InvitesController {
     return this.invitesService.create(request.user.id, groupId, dto);
   }
 
+  @Get('invites/sent')
+  findSent(@Req() request: AuthenticatedRequest) {
+    return this.invitesService.findSent(request.user.id);
+  }
+
   @Get('invites')
   findReceived(@Req() request: AuthenticatedRequest) {
     return this.invitesService.findReceived(request.user.id);

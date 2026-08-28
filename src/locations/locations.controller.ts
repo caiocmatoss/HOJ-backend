@@ -1,14 +1,15 @@
-import {
+﻿import {
+  Body,
   Controller,
   Delete,
   Get,
   Patch,
   Req,
+  Res,
   UseGuards,
-  Body,
 } from '@nestjs/common';
 
-import type { Request } from 'express';
+import type { Response, Request } from 'express';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -37,8 +38,13 @@ export class LocationsController {
   }
 
   @Get()
-  findMine(@Req() request: AuthenticatedRequest) {
-    return this.locationsService.findByUserId(request.user.id);
+  async findMine(
+    @Req() request: AuthenticatedRequest,
+    @Res() response: Response,
+  ): Promise<void> {
+    const location = await this.locationsService.findByUserId(request.user.id);
+
+    response.status(200).json(location ?? null);
   }
 
   @Delete()
