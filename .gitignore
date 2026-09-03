@@ -67,3 +67,6 @@ coverage/
 *backup*
 *.before-*
 Thumbs.db
+
+# Local FSQ exports
+data/imports/

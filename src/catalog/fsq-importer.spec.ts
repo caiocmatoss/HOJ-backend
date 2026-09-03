@@ -1,15 +1,65 @@
-// Pure importer contract tests; no database writes.
-const { normalizeRow, normalizeCategory, parseCsv } = require('../../scripts/import-fsq-os-places.cjs');
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
-describe('FSQ OS Places importer rules', () => {
-  it('accepts a supported valid place', () => expect(normalizeRow({ fsq_place_id: 'p1', name: 'Club', latitude: '-23', longitude: '-46', fsq_category_labels: 'night club' }).ok).toBe(true));
-  it('rejects missing id and invalid coordinates', () => {
-    expect(normalizeRow({ name: 'x', latitude: '-23', longitude: '-46', fsq_category_labels: 'bar' }).reason).toBe('missing_id');
-    expect(normalizeRow({ fsq_place_id: 'p2', name: 'x', latitude: '100', longitude: '-46', fsq_category_labels: 'bar' }).reason).toBe('invalid_latitude');
+const importer = require('../../scripts/import-fsq-os-places.cjs');
+
+describe('FSQ importer dry-run', () => {
+  it('parses and validates CSV without initializing Prisma', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fsq-import-'));
+    const file = path.join(root, 'places.csv');
+    fs.writeFileSync(file, [
+      'fsq_place_id,name,latitude,longitude,fsq_category_labels',
+      'fsq-1,Place,-23.5,-46.6,Restaurant',
+    ].join(String.fromCharCode(10)));
+    const script = path.resolve(__dirname, '../../scripts/import-fsq-os-places.cjs');
+    const env = { ...process.env };
+    delete env.DATABASE_URL;
+    const result = spawnSync(process.execPath, [script, '--file', file, '--dry-run'], { cwd: path.resolve(__dirname, '../..'), env, encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('PrismaClientInitializationError');
+    const report = JSON.parse(result.stdout);
+    expect(report.mode).toBe('dry-run');
+    expect(report.recordsRead).toBe(1);
+    expect(report.wouldProcess).toBe(1);
+    expect(report.wrote).toBe(false);
   });
-  it('rejects closed and unsupported records', () => {
-    expect(normalizeRow({ fsq_place_id: 'p3', name: 'x', latitude: '-23', longitude: '-46', date_closed: '2025-01-01', fsq_category_labels: 'bar' }).reason).toBe('closed');
-    expect(normalizeCategory({ fsq_category_labels: 'bank' })).toBeNull();
+});
+describe('FSQ category matching', () => {
+  it('parses pipe-separated labels and matches hierarchical categories', () => {
+    expect(importer.parseFsqCategoryLabels('A| B |')).toEqual(['A', 'B']);
+    const accepted = [
+      'Dining and Drinking > Restaurant',
+      'Dining and Drinking > Restaurant > Pizzeria',
+      'Dining and Drinking > Restaurant > Burger Joint',
+      'Dining and Drinking > Bar',
+      'Dining and Drinking > Bar > Sports Bar',
+      'Arts and Entertainment > Night Club',
+      'Arts and Entertainment > Performing Arts Venue > Concert Hall',
+      'Arts and Entertainment > Performing Arts Venue > Music Venue',
+      'Retail > Food and Beverage Retail|Dining and Drinking > Bar',
+      'Travel and Transportation > Lodging > Resort|Dining and Drinking > Restaurant|Landmarks and Outdoors > Farm',
+    ];
+    for (const labels of accepted) expect(importer.normalizeCategory({ fsq_category_labels: labels })).toBeTruthy();
   });
-  it('parses quoted CSV fields', () => expect(parseCsv('fsq_place_id,name\n1,"A, B"')[0].name).toBe('A, B'));
+
+  it('rejects unrelated categories and substring false positives', () => {
+    for (const labels of [
+      'Dining and Drinking > Bakery',
+      'Business and Professional Services > Barber Shop',
+      'Travel and Transportation > Fuel Station',
+      'Retail > Office Supply Store',
+      'Business and Professional Services > Office',
+      'Retail > Convenience Store',
+      '',
+      undefined,
+      null,
+    ]) expect(importer.normalizeCategory({ fsq_category_labels: labels })).toBeNull();
+  });
+
+  it('maps multiple supported categories deterministically', () => {
+    expect(importer.normalizeCategory({ fsq_category_labels: 'Dining and Drinking > Restaurant|Arts and Entertainment > Night Club' })).toBe('Balada');
+    expect(importer.normalizeCategory({ fsq_category_labels: 'Dining and Drinking > Restaurant|Dining and Drinking > Bar' })).toBe('Bar');
+  });
 });

@@ -32,6 +32,14 @@ type VenueResponse = {
   source: 'MANUAL' | 'IMPORTED';
   externalProvider: string | null;
   externalId: string | null;
+  locality: string | null;
+  region: string | null;
+  country: string | null;
+  postcode: string | null;
+  phone: string | null;
+  website: string | null;
+  sourceRefreshedAt: Date | null;
+  sourceClosedAt: Date | null;
       images?: Array<{ url: string; position: number }>;
   description: string;
   image: string;
@@ -119,6 +127,14 @@ export class VenuesService {
   source: 'MANUAL' | 'IMPORTED';
   externalProvider: string | null;
   externalId: string | null;
+  locality: string | null;
+  region: string | null;
+  country: string | null;
+  postcode: string | null;
+  phone: string | null;
+  website: string | null;
+  sourceRefreshedAt: Date | null;
+  sourceClosedAt: Date | null;
       images?: Array<{ url: string; position: number }>;
       description: string | null;
       image: string | null;
@@ -153,6 +169,22 @@ export class VenuesService {
       source: venue.source,
       externalProvider: venue.externalProvider,
       externalId: venue.externalId,
+
+      locality: venue.locality ?? null,
+
+      region: venue.region ?? null,
+
+      country: venue.country ?? null,
+
+      postcode: venue.postcode ?? null,
+
+      phone: venue.phone ?? null,
+
+      website: venue.website ?? null,
+
+      sourceRefreshedAt: venue.sourceRefreshedAt ?? null,
+
+      sourceClosedAt: venue.sourceClosedAt ?? null,
 
       description: venue.description ?? '',
 
