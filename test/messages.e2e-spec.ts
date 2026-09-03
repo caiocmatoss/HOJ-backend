@@ -1,4 +1,4 @@
-﻿import { Test, TestingModule } from '@nestjs/testing';
+import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 
 import request from 'supertest';
@@ -85,6 +85,7 @@ describe('Messages (e2e)', () => {
       'Messages User A',
     );
 
+    await prisma.user.update({ where: { id: userA.user.id }, data: { role: 'ADMIN' } });
     userB = await registerUser(
       `messages-b-${Date.now()}@teste.com`,
       'Messages User B',

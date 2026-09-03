@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
@@ -22,7 +24,8 @@ export class VenuesController {
   constructor(private readonly venuesService: VenuesService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
   create(
     @Body()
     createVenueDto: CreateVenueDto,
@@ -128,7 +131,8 @@ export class VenuesController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
   update(
     @Param('id')
     id: string,
@@ -140,7 +144,8 @@ export class VenuesController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
   remove(
     @Param('id')
     id: string,

@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -21,7 +23,8 @@ export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
   create(@Body() dto: CreateEventDto) {
     return this.eventsService.create(dto);
   }
@@ -55,13 +58,15 @@ export class EventsController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
   update(@Param('id') id: string, @Body() dto: UpdateEventDto) {
     return this.eventsService.update(id, dto);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
   remove(@Param('id') id: string) {
     return this.eventsService.remove(id);
   }

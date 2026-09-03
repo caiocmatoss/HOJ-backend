@@ -39,6 +39,11 @@ export class CreateVenueDto {
   occupancy?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  capacity?: number;
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   description?: string;

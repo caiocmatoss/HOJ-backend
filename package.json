@@ -18,7 +18,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "node scripts/run-e2e-safe.cjs",
-    "test:e2e:jest": "node --experimental-vm-modules .\\node_modules\\jest\\bin\\jest.js --config ./test/jest-e2e.json"
+    "test:e2e:jest": "node --experimental-vm-modules .\\node_modules\\jest\\bin\\jest.js --config ./test/jest-e2e.json",
+    "user:role": "node scripts/set-user-role.cjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

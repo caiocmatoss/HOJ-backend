@@ -82,12 +82,14 @@ describe('Invites (e2e)', () => {
     prisma = app.get(PrismaService);
 
     await app.init();
+    prisma = app.get(PrismaService);
 
     userA = await registerUser(
       `invites-a-${Date.now()}@teste.com`,
       'Invites User A',
     );
 
+    await prisma.user.update({ where: { id: userA.user.id }, data: { role: 'ADMIN' } });
     userB = await registerUser(
       `invites-b-${Date.now()}@teste.com`,
       'Invites User B',

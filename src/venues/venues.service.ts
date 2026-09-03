@@ -21,6 +21,10 @@ type VenueResponse = {
   latitude: number;
   longitude: number;
   occupancy: number;
+  capacity: number | null;
+  source: 'MANUAL' | 'IMPORTED';
+  externalProvider: string | null;
+  externalId: string | null;
   description: string;
   image: string;
   rating: number;
@@ -103,6 +107,10 @@ export class VenuesService {
       latitude: unknown;
       longitude: unknown;
       occupancy: number;
+  capacity: number | null;
+  source: 'MANUAL' | 'IMPORTED';
+  externalProvider: string | null;
+  externalId: string | null;
       description: string | null;
       image: string | null;
       rating: unknown;
@@ -132,6 +140,10 @@ export class VenuesService {
       longitude,
 
       occupancy: venue.occupancy,
+      capacity: venue.capacity,
+      source: venue.source,
+      externalProvider: venue.externalProvider,
+      externalId: venue.externalId,
 
       description: venue.description ?? '',
 
@@ -175,6 +187,7 @@ export class VenuesService {
         longitude: createVenueDto.longitude,
 
         occupancy: createVenueDto.occupancy ?? 0,
+        capacity: createVenueDto.capacity,
 
         description: createVenueDto.description?.trim(),
 
@@ -303,6 +316,7 @@ export class VenuesService {
       latitude?: number;
       longitude?: number;
       occupancy?: number;
+      capacity?: number;
       description?: string;
       image?: string;
       rating?: number;
@@ -333,6 +347,10 @@ export class VenuesService {
 
     if (updateVenueDto.occupancy !== undefined) {
       data.occupancy = updateVenueDto.occupancy;
+    }
+
+    if (updateVenueDto.capacity !== undefined) {
+      data.capacity = updateVenueDto.capacity;
     }
 
     if (updateVenueDto.description !== undefined) {

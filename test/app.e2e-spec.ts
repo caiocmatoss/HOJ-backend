@@ -5,6 +5,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 
 import { AppModule } from './../src/app.module';
+import { PrismaService } from './../src/prisma/prisma.service';
 
 interface AuthUser {
   id: string;
@@ -81,6 +82,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
 
   let accessToken: string;
   let userId: string;
+  let prisma: PrismaService;
 
   const testEmail = `e2e-${Date.now()}@teste.com`;
   const testPassword = 'Teste@123456';
@@ -93,6 +95,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
     app = moduleFixture.createNestApplication();
 
     await app.init();
+    prisma = app.get(PrismaService);
   });
 
   afterAll(async () => {
@@ -140,6 +143,7 @@ describe('HOJÉ OND Backend (e2e)', () => {
 
       accessToken = body.accessToken;
       userId = body.user.id;
+      await prisma.user.update({ where: { id: userId }, data: { role: 'ADMIN' } });
     });
 
     it('POST /auth/register não deve permitir email duplicado', async () => {

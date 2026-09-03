@@ -13,6 +13,21 @@ enum UserStatus {
   OFFLINE
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum VenueSource {
+  MANUAL
+  IMPORTED
+}
+
+enum EventSource {
+  MANUAL
+  IMPORTED
+}
+
 enum VenueStatus {
   OPEN
   CLOSED
@@ -52,6 +67,7 @@ model User {
   avatar       String?
   bio          String?
   status       UserStatus @default(OFFLINE)
+  role         UserRole   @default(USER)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -152,6 +168,10 @@ model Venue {
   promotion   String?
   playlist    String?
   status      VenueStatus @default(OPEN)
+  capacity    Int?
+  source      VenueSource @default(MANUAL)
+  externalProvider String?
+  externalId  String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
@@ -163,6 +183,7 @@ model Venue {
   @@index([category])
   @@index([status])
   @@index([latitude, longitude])
+  @@unique([externalProvider, externalId])
 }
 
 model Event {
@@ -178,6 +199,9 @@ model Event {
   price       Decimal? @db.Decimal(10, 2)
   attendees   Int      @default(0)
   isLive      Boolean  @default(false)
+  source      EventSource @default(MANUAL)
+  externalProvider String?
+  externalId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -187,6 +211,7 @@ model Event {
   @@index([date])
   @@index([category])
   @@index([isLive])
+  @@unique([externalProvider, externalId])
 }
 
 model Group {
