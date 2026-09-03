@@ -3,10 +3,27 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 import { UpdateLocationDto } from './dto/update-location.dto';
+import { UpdateLocationPreferencesDto } from './dto/update-location-preferences.dto';
 
 @Injectable()
 export class LocationsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  getPreferences(userId: string) {
+    return this.prisma.locationPreferences.upsert({
+      where: { userId },
+      create: { userId },
+      update: {},
+    });
+  }
+
+  updatePreferences(userId: string, dto: UpdateLocationPreferencesDto) {
+    return this.prisma.locationPreferences.upsert({
+      where: { userId },
+      create: { userId, ...dto },
+      update: dto,
+    });
+  }
 
   async update(userId: string, dto: UpdateLocationDto) {
     const user = await this.prisma.user.findUnique({

@@ -164,6 +164,7 @@ export class FriendsService {
             avatar: true,
             bio: true,
             status: true,
+            privacyPreferences: { select: { showStatus: true } },
           },
         },
         addressee: {
@@ -174,6 +175,7 @@ export class FriendsService {
             avatar: true,
             bio: true,
             status: true,
+            privacyPreferences: { select: { showStatus: true } },
           },
         },
       },
@@ -182,11 +184,11 @@ export class FriendsService {
       },
     });
 
-    return friendships.map((friendship) =>
-      friendship.requesterId === userId
-        ? friendship.addressee
-        : friendship.requester,
-    );
+    return friendships.map((friendship) => {
+      const friend = friendship.requesterId === userId ? friendship.addressee : friendship.requester;
+      const { privacyPreferences, ...publicFriend } = friend;
+      return { ...publicFriend, status: privacyPreferences?.showStatus === false ? 'OFFLINE' : friend.status };
+    });
   }
 
   async getNearbyFriends(userId: string, radiusKm = 10) {
@@ -257,6 +259,7 @@ export class FriendsService {
             avatar: true,
             bio: true,
             status: true,
+            privacyPreferences: { select: { showStatus: true } },
           },
         },
       },
@@ -296,7 +299,7 @@ export class FriendsService {
           email: location.user.email,
           avatar: location.user.avatar,
           bio: location.user.bio,
-          status: location.user.status,
+          status: location.user.privacyPreferences?.showStatus === false ? 'OFFLINE' : location.user.status,
           latitude: friendLatitude,
           longitude: friendLongitude,
           locationUpdatedAt: location.updatedAt,

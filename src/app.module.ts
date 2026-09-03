@@ -18,6 +18,7 @@ import { CheckinsModule } from './checkins/checkins.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
 import { PresenceModule } from './presence/presence.module';
+import { PrivacyModule } from './privacy/privacy.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { PresenceModule } from './presence/presence.module';
     NotificationsModule,
     FavoritesModule,
     PresenceModule,
+    PrivacyModule,
   ],
 
   controllers: [AppController],

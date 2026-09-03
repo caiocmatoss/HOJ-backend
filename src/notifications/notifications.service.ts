@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { NotificationsGateway } from './notifications.gateway';
+import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 
 @Injectable()
 export class NotificationsService {
@@ -11,6 +12,22 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     private readonly notificationsGateway: NotificationsGateway,
   ) {}
+
+  getPreferences(userId: string) {
+    return this.prisma.notificationPreferences.upsert({
+      where: { userId },
+      create: { userId },
+      update: {},
+    });
+  }
+
+  updatePreferences(userId: string, dto: UpdateNotificationPreferencesDto) {
+    return this.prisma.notificationPreferences.upsert({
+      where: { userId },
+      create: { userId, ...dto },
+      update: dto,
+    });
+  }
 
   async create(userId: string, dto: CreateNotificationDto) {
     const user = await this.prisma.user.findUnique({

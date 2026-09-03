@@ -1,10 +1,11 @@
-import { Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
 
 import type { Request } from 'express';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 import { NotificationsService } from './notifications.service';
+import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 
 type AuthenticatedRequest = Request & {
   user: {
@@ -25,6 +26,16 @@ export class NotificationsController {
   @Get()
   findAll(@Req() request: AuthenticatedRequest) {
     return this.notificationsService.findAll(request.user.id);
+  }
+
+  @Get('preferences')
+  getPreferences(@Req() request: AuthenticatedRequest) {
+    return this.notificationsService.getPreferences(request.user.id);
+  }
+
+  @Patch('preferences')
+  updatePreferences(@Req() request: AuthenticatedRequest, @Body() dto: UpdateNotificationPreferencesDto) {
+    return this.notificationsService.updatePreferences(request.user.id, dto);
   }
 
   @Get('unread')

@@ -1,0 +1,11 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const E2E_DATABASE = "hojeond_e2e";
+const projectRoot = path.resolve(__dirname, "..");
+function parseDotEnv(filePath) { if (!fs.existsSync(filePath)) return {}; const values = {}; for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) { const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/); if (!match) continue; let value = match[2]; if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1); values[match[1]] = value; } return values; }
+function deriveE2EDatabaseUrl(baseUrl) { if (!baseUrl) throw new Error("DATABASE_URL is not configured."); const url = new URL(baseUrl); url.pathname = `/${E2E_DATABASE}`; return url; }
+function databaseName(url) { return decodeURIComponent(new URL(url).pathname.replace(/^\//, "")); }
+function run() { const dotenv = parseDotEnv(path.join(projectRoot, ".env")); const baseUrl = process.env.DATABASE_URL || dotenv.DATABASE_URL; const e2eUrl = deriveE2EDatabaseUrl(baseUrl); const dbName = databaseName(e2eUrl.toString()); if (dbName !== E2E_DATABASE) throw new Error(`Refusing E2E run: database must be ${E2E_DATABASE}, got ${dbName}.`); console.log(`E2E database: ${dbName}`); if (process.argv.includes("--check")) return; const childEnv = { ...process.env, NODE_ENV: "test", DATABASE_URL: e2eUrl.toString() }; const npx = process.platform === "win32" ? "npx.cmd" : "npx"; const migrate = spawnSync(npx, ["prisma", "migrate", "deploy"], { cwd: projectRoot, env: childEnv, stdio: "inherit", shell: process.platform === "win32" }); if (migrate.error) throw migrate.error; if (migrate.status !== 0) process.exit(migrate.status ?? 1); const jestBin = path.join(projectRoot, "node_modules", "jest", "bin", "jest.js"); const tests = spawnSync(process.execPath, ["--experimental-vm-modules", jestBin, "--config", "./test/jest-e2e.json"], { cwd: projectRoot, env: childEnv, stdio: "inherit" }); if (tests.error) throw tests.error; process.exit(tests.status ?? 1); }
+try { run(); } catch (error) { console.error(error instanceof Error ? error.message : "E2E runner failed."); process.exit(1); }
+module.exports = { deriveE2EDatabaseUrl, databaseName };

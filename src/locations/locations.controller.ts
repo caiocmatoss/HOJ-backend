@@ -14,6 +14,7 @@ import type { Response, Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 import { UpdateLocationDto } from './dto/update-location.dto';
+import { UpdateLocationPreferencesDto } from './dto/update-location-preferences.dto';
 import { LocationsService } from './locations.service';
 
 type AuthenticatedRequest = Request & {
@@ -31,6 +32,19 @@ type AuthenticatedRequest = Request & {
 @UseGuards(JwtAuthGuard)
 export class LocationsController {
   constructor(private readonly locationsService: LocationsService) {}
+
+  @Get('preferences')
+  getPreferences(@Req() request: AuthenticatedRequest) {
+    return this.locationsService.getPreferences(request.user.id);
+  }
+
+  @Patch('preferences')
+  updatePreferences(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: UpdateLocationPreferencesDto,
+  ) {
+    return this.locationsService.updatePreferences(request.user.id, dto);
+  }
 
   @Patch()
   update(@Req() request: AuthenticatedRequest, @Body() dto: UpdateLocationDto) {

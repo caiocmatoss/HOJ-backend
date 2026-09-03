@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '../../generated/prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { AvatarStorageService } from './avatar-storage.service';
 
 @Injectable()
 export class UsersService {
@@ -11,6 +13,9 @@ export class UsersService {
     id: true,
     name: true,
     email: true,
+    username: true,
+    city: true,
+    phone: true,
     avatar: true,
     bio: true,
     status: true,
@@ -62,6 +67,9 @@ export class UsersService {
 
     const data: {
       name?: string;
+      username?: string | null;
+      city?: string | null;
+      phone?: string | null;
       bio?: string | null;
       avatar?: string | null;
     } = {};
@@ -70,22 +78,59 @@ export class UsersService {
       data.name = updateUserDto.name.trim();
     }
 
+    if (updateUserDto.username !== undefined) {
+      const username = (updateUserDto.username ?? '').trim().replace(/^@+/, '').toLowerCase();
+      data.username = username.length > 0 ? username : null;
+    }
+    if (updateUserDto.city !== undefined) {
+      const city = (updateUserDto.city ?? '').trim();
+      if (!city) data.city = null;
+      else {
+        const match = city.match(/^(.+),\s*([A-Za-z]{2})$/);
+        if (!match) throw new BadRequestException('Informe a cidade e a UF, por exemplo: Carapicuíba, SP.');
+        data.city = `${match[1].trim()}, ${match[2].toUpperCase()}`;
+      }
+    }
+    if (updateUserDto.phone !== undefined) {
+      const raw = (updateUserDto.phone ?? '').trim();
+      if (!raw) {
+        data.phone = null;
+      } else {
+        const normalized = `${raw.startsWith('+') ? '+' : ''}${raw.replace(/\D/g, '')}`;
+        const digitCount = normalized.replace('+', '').length;
+        if (digitCount < 8 || digitCount > 20) throw new BadRequestException('Digite um telefone válido.');
+        data.phone = normalized;
+      }
+    }
+
     if (updateUserDto.bio !== undefined) {
-      const bio = updateUserDto.bio.trim();
+      const bio = (updateUserDto.bio ?? '').trim();
 
       data.bio = bio.length > 0 ? bio : null;
     }
 
     if (updateUserDto.avatar !== undefined) {
-      data.avatar = updateUserDto.avatar.trim();
+      data.avatar = (updateUserDto.avatar ?? '').trim() || null;
     }
 
-    return this.prisma.user.update({
-      where: {
-        id,
-      },
-      data,
+    try {
+      return await this.prisma.user.update({ where: { id }, data, select: this.publicUserSelect });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Este nome de usuário já está em uso.');
+      }
+      throw error;
+    }
+  }
+
+  async updateAvatar(id: string, reference: string, storage: AvatarStorageService) {
+    const current = await this.prisma.user.findUnique({ where: { id }, select: { avatar: true } });
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { avatar: reference },
       select: this.publicUserSelect,
     });
+    await storage.removeIfLocal(current?.avatar);
+    return updated;
   }
 }
