@@ -35,8 +35,15 @@ export class VenuesController {
 
   @Get()
   findAll(
+    @Query('q') q?: string,
+
     @Query('category')
     category?: string,
+
+    @Query('locality') locality?: string,
+    @Query('region') region?: string,
+    @Query('country') country?: string,
+    @Query('source') source?: string,
 
     @Query('status')
     status?: string,
@@ -46,6 +53,10 @@ export class VenuesController {
 
     @Query('longitude')
     longitude?: string,
+
+    @Query('limit') limit?: string,
+
+    @Query('cursor') cursor?: string,
 
     @Query('radius')
     radius?: string,
@@ -110,7 +121,14 @@ export class VenuesController {
     }
 
     return this.venuesService.findAll({
+      q: q?.trim() || undefined,
       category: category?.trim() || undefined,
+      locality: locality?.trim() || undefined,
+      region: region?.trim() || undefined,
+      country: country?.trim() || undefined,
+      source: source?.trim().toUpperCase() === 'IMPORTED' ? 'IMPORTED' : source?.trim().toUpperCase() === 'MANUAL' ? 'MANUAL' : undefined,
+      limit: limit ? Number(limit) : undefined,
+      cursor: cursor?.trim() || undefined,
 
       status: parsedStatus,
 

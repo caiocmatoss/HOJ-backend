@@ -90,25 +90,25 @@ model User {
 
   locations UserLocation[]
 
-  notifications Notification[]
+  notifications           Notification[]
   notificationPreferences NotificationPreferences?
-  locationPreferences LocationPreferences?
-  privacyPreferences PrivacyPreferences?
+  locationPreferences     LocationPreferences?
+  privacyPreferences      PrivacyPreferences?
 
   @@index([name])
   @@index([status])
 }
 
 model LocationPreferences {
-  id               String                   @id @default(cuid())
-  userId           String                   @unique
-  precise          Boolean                  @default(true)
-  accuracy         LocationAccuracy         @default(HIGH)
-  updateFreq       LocationUpdateFrequency  @default(REALTIME)
-  shareWithFriends Boolean                  @default(true)
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
-  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id               String                  @id @default(cuid())
+  userId           String                  @unique
+  precise          Boolean                 @default(true)
+  accuracy         LocationAccuracy        @default(HIGH)
+  updateFreq       LocationUpdateFrequency @default(REALTIME)
+  shareWithFriends Boolean                 @default(true)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model PrivacyPreferences {
@@ -154,64 +154,92 @@ model Friendship {
 }
 
 model Venue {
-  id          String      @id @default(cuid())
-  name        String
-  category    String
-  address     String
-  latitude    Decimal     @db.Decimal(10, 7)
-  longitude   Decimal     @db.Decimal(10, 7)
-  occupancy   Int         @default(0)
-  description String?
-  image       String?
-  rating      Decimal?    @db.Decimal(3, 2)
-  dj          String?
-  promotion   String?
-  playlist    String?
-  status      VenueStatus @default(OPEN)
-  capacity    Int?
-  source      VenueSource @default(MANUAL)
-  externalProvider String?
-  externalId  String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id                String      @id @default(cuid())
+  name              String
+  category          String
+  address           String
+  latitude          Decimal     @db.Decimal(10, 7)
+  longitude         Decimal     @db.Decimal(10, 7)
+  occupancy         Int         @default(0)
+  description       String?
+  image             String?
+  rating            Decimal?    @db.Decimal(3, 2)
+  dj                String?
+  promotion         String?
+  playlist          String?
+  status            VenueStatus @default(OPEN)
+  capacity          Int?
+  source            VenueSource @default(MANUAL)
+  externalProvider  String?
+  externalId        String?
+  locality          String?
+  region            String?
+  country           String?
+  postcode          String?
+  phone             String?
+  website           String?
+  sourceRefreshedAt DateTime?
+  sourceClosedAt    DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   events    Event[]
   groups    Group[]
   favorites Favorite[]
   checkins  Checkin[]
+  images    VenueImage[]
 
+  @@unique([externalProvider, externalId])
   @@index([category])
   @@index([status])
   @@index([latitude, longitude])
-  @@unique([externalProvider, externalId])
+  @@index([locality])
+  @@index([region])
+  @@index([country])
+  @@index([source])
 }
 
 model Event {
-  id          String   @id @default(cuid())
-  title       String
-  image       String?
-  venueId     String
-  venueName   String?
-  date        DateTime
-  time        String
-  category    String
-  description String?
-  price       Decimal? @db.Decimal(10, 2)
-  attendees   Int      @default(0)
-  isLive      Boolean  @default(false)
-  source      EventSource @default(MANUAL)
+  id               String      @id @default(cuid())
+  title            String
+  image            String?
+  venueId          String
+  venueName        String?
+  date             DateTime
+  time             String
+  category         String
+  description      String?
+  price            Decimal?    @db.Decimal(10, 2)
+  attendees        Int         @default(0)
+  isLive           Boolean     @default(false)
+  source           EventSource @default(MANUAL)
+  startsAt         DateTime?
+  endsAt           DateTime?
   externalProvider String?
-  externalId String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  externalId       String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
 
+  @@unique([externalProvider, externalId])
   @@index([venueId])
   @@index([date])
   @@index([category])
   @@index([isLive])
-  @@unique([externalProvider, externalId])
+  @@index([startsAt])
+  @@index([endsAt])
+}
+
+model VenueImage {
+  id        String   @id @default(cuid())
+  venueId   String
+  url       String
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  venue     Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@index([venueId, position])
 }
 
 model Group {

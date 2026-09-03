@@ -32,6 +32,14 @@ export class CreateEventDto {
   @IsDateString()
   date: string;
 
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endsAt?: string;
+
   @IsString()
   @IsNotEmpty()
   @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, {

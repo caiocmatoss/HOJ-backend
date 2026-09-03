@@ -34,6 +34,9 @@ export class EventsController {
     @Query('venueId') venueId?: string,
     @Query('category') category?: string,
     @Query('isLive') isLive?: string,
+    @Query('q') q?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
   ) {
     let parsedIsLive: boolean | undefined;
 
@@ -49,6 +52,9 @@ export class EventsController {
       venueId,
       category,
       isLive: parsedIsLive,
+      q: q?.trim() || undefined,
+      limit: limit ? Number(limit) : undefined,
+      cursor: cursor?.trim() || undefined,
     });
   }
 

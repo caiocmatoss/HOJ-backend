@@ -6,6 +6,13 @@ import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 
 type VenueListFilters = {
+  q?: string;
+  locality?: string;
+  region?: string;
+  country?: string;
+  source?: 'MANUAL' | 'IMPORTED';
+  limit?: number;
+  cursor?: string;
   category?: string;
   status?: 'OPEN' | 'CLOSED';
   latitude?: number;
@@ -25,6 +32,7 @@ type VenueResponse = {
   source: 'MANUAL' | 'IMPORTED';
   externalProvider: string | null;
   externalId: string | null;
+      images?: Array<{ url: string; position: number }>;
   description: string;
   image: string;
   rating: number;
@@ -111,6 +119,7 @@ export class VenuesService {
   source: 'MANUAL' | 'IMPORTED';
   externalProvider: string | null;
   externalId: string | null;
+      images?: Array<{ url: string; position: number }>;
       description: string | null;
       image: string | null;
       rating: unknown;
@@ -161,7 +170,7 @@ export class VenuesService {
        * Mantemos o campo para compatibilidade
        * com o frontend atual.
        */
-      gallery: [],
+      gallery: (venue.images ?? []).sort((a, b) => a.position - b.position).map((image) => image.url),
 
       dj: venue.dj ?? '',
 
@@ -224,6 +233,11 @@ export class VenuesService {
   async findAll(filters: VenueListFilters = {}) {
     const venues = await this.prisma.venue.findMany({
       where: {
+        ...(filters.q ? { OR: [{ name: { contains: filters.q, mode: "insensitive" } }, { address: { contains: filters.q, mode: "insensitive" } }] } : {}),
+        ...(filters.locality ? { locality: { equals: filters.locality, mode: "insensitive" } } : {}),
+        ...(filters.region ? { region: { equals: filters.region, mode: "insensitive" } } : {}),
+        ...(filters.country ? { country: { equals: filters.country, mode: "insensitive" } } : {}),
+        ...(filters.source ? { source: filters.source } : {}),
         ...(filters.category
           ? {
               category: {
@@ -239,6 +253,9 @@ export class VenuesService {
             }
           : {}),
       },
+
+      take: filters.limit ? Math.min(Math.max(filters.limit, 1), 100) : undefined,
+      ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}),
 
       orderBy: {
         createdAt: 'desc',
@@ -297,6 +314,7 @@ export class VenuesService {
       where: {
         id,
       },
+      include: { images: { orderBy: { position: "asc" } } },
     });
 
     if (!venue) {

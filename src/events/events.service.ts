@@ -59,6 +59,12 @@ export class EventsService {
       throw new BadRequestException('Data do evento inválida.');
     }
 
+    const startsAt = dto.startsAt ? new Date(dto.startsAt) : null;
+    const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
+    if (startsAt && Number.isNaN(startsAt.getTime())) throw new BadRequestException("startsAt inválido.");
+    if (endsAt && Number.isNaN(endsAt.getTime())) throw new BadRequestException("endsAt inválido.");
+    if (startsAt && endsAt && endsAt <= startsAt) throw new BadRequestException("endsAt deve ser posterior a startsAt.");
+
     return this.prisma.event.create({
       data: {
         title: dto.title.trim(),
@@ -72,6 +78,8 @@ export class EventsService {
         price: dto.price,
         attendees: dto.attendees ?? 0,
         isLive: dto.isLive ?? false,
+        startsAt,
+        endsAt,
       },
 
       include: {
@@ -86,9 +94,13 @@ export class EventsService {
     venueId?: string;
     category?: string;
     isLive?: boolean;
+    q?: string;
+    limit?: number;
+    cursor?: string;
   }) {
     return this.prisma.event.findMany({
       where: {
+        ...(filters?.q ? { title: { contains: filters.q, mode: "insensitive" } } : {}),
         ...(filters?.venueId
           ? {
               venueId: filters.venueId,
@@ -107,6 +119,9 @@ export class EventsService {
             }
           : {}),
       },
+
+      take: filters?.limit ? Math.min(Math.max(filters.limit, 1), 100) : undefined,
+      ...(filters?.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}),
 
       include: {
         venue: {
@@ -184,6 +199,12 @@ export class EventsService {
       }
     }
 
+    const startsAt = data.startsAt !== undefined ? new Date(data.startsAt) : existingEvent.startsAt;
+    const endsAt = data.endsAt !== undefined ? new Date(data.endsAt) : existingEvent.endsAt;
+    if (data.startsAt !== undefined && Number.isNaN(startsAt?.getTime())) throw new BadRequestException("startsAt inválido.");
+    if (data.endsAt !== undefined && Number.isNaN(endsAt?.getTime())) throw new BadRequestException("endsAt inválido.");
+    if (startsAt && endsAt && endsAt <= startsAt) throw new BadRequestException("endsAt deve ser posterior a startsAt.");
+
     return this.prisma.event.update({
       where: {
         id,
@@ -255,6 +276,8 @@ export class EventsService {
               isLive: data.isLive,
             }
           : {}),
+        ...(data.startsAt !== undefined ? { startsAt } : {}),
+        ...(data.endsAt !== undefined ? { endsAt } : {}),
       },
 
       include: {
