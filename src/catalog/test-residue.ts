@@ -24,3 +24,16 @@ export function classifyResidue(entity: ResidueEntity, record: Record<string, un
 export function classifyRelated(entity: ResidueEntity, record: Record<string, unknown>, relatedReasons: string[]): ResidueCandidate | null {
   return classifyResidue(entity, record, relatedReasons);
 }
+export type ManifestClassification = "SAFE_TO_REMOVE" | "REVIEW_REQUIRED" | "KEEP";
+
+export function classifyManifestRecord(
+  candidate: ResidueCandidate,
+  options: { hasEvidenceFile: boolean; relationCount: number; allRelationsAreCandidates: boolean; explicitlyKeep?: boolean },
+): { classification: ManifestClassification; reasons: string[] } {
+  const reasons = [...candidate.reasons];
+  if (options.explicitlyKeep) return { classification: "KEEP", reasons: [...reasons, "explicitly marked as preserved"] };
+  if (!options.hasEvidenceFile) return { classification: "REVIEW_REQUIRED", reasons: [...reasons, "no matching test evidence file"] };
+  if (options.relationCount === 0) return { classification: "SAFE_TO_REMOVE", reasons: [...reasons, "no related records"] };
+  if (options.allRelationsAreCandidates) return { classification: "REVIEW_REQUIRED", reasons: [...reasons, "relations are test-candidate records but require dependency review"] };
+  return { classification: "REVIEW_REQUIRED", reasons: [...reasons, "has related records requiring review"] };
+}

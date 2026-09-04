@@ -22,6 +22,7 @@
     "user:role": "node scripts/set-user-role.cjs",
     "venues:audit:duplicates": "node scripts/audit-venue-duplicates.cjs",
     "dev:audit:test-residue": "node scripts/audit-dev-test-residue.cjs",
+    "dev:cleanup:manifest": "node scripts/build-dev-cleanup-manifest.cjs",
     "venues:import:fsq": "node scripts/import-fsq-os-places.cjs",
     "venues:export:fsq": "node scripts/export-fsq-os-places.cjs"
   },

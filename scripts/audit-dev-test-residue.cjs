@@ -99,4 +99,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch((error) => { console.error(error instanceof Error ? error.message : "Residue audit failed."); process.exitCode = 1; });
-module.exports = { parseDotEnv, createPrismaClient };
+module.exports = { parseDotEnv, createPrismaClient, loadData };
