@@ -2,7 +2,7 @@ import { CheckinsService } from './checkins.service';
 
 function txMock() {
   return {
-    checkin: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
+    checkin: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn(), count: jest.fn().mockResolvedValue(0), create: jest.fn(), update: jest.fn() },
     venue: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), update: jest.fn(), findUnique: jest.fn() },
   };
 }

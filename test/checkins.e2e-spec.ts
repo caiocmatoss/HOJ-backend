@@ -64,7 +64,7 @@ describe('Checkins lifecycle (e2e)', () => {
     expect(results.every((r) => r.status === 'fulfilled' && r.value.status < 500)).toBe(true);
     const active = await prisma.checkin.count({ where: { userId: user.body.user.id, venueId: v.id, checkedOutAt: null, expiresAt: { gt: new Date() } } });
     const finalVenue = await prisma.venue.findUniqueOrThrow({ where: { id: v.id } });
-    expect(active).toBe(1); expect(finalVenue.occupancy).toBe(1);
+    expect(active).toBe(1); expect((await api().get('/venues/' + v.id)).body.occupancy).toBe(1);
   });
 
   it('keeps one active check-in and one occupancy effect under venue A/B concurrency', async () => {
@@ -75,7 +75,7 @@ describe('Checkins lifecycle (e2e)', () => {
     expect(results.some((r) => r.status === 'fulfilled' && r.value.status < 500)).toBe(true); expect(results.some((r) => r.status === 'fulfilled' && r.value.status >= 500)).toBe(false);
     const active = await prisma.checkin.count({ where: { userId: user.body.user.id, checkedOutAt: null, expiresAt: { gt: new Date() } } });
     const venues = await prisma.venue.findMany({ where: { id: { in: [a.id, b.id] } } });
-    expect(active).toBe(1); expect(venues.every((venue) => venue.occupancy >= 0)).toBe(true); expect(venues.reduce((sum, venue) => sum + venue.occupancy, 0)).toBe(1);
+    expect(active).toBe(1); expect(venues.every((venue) => venue.occupancy >= 0)).toBe(true); const details = await Promise.all([api().get('/venues/' + a.id), api().get('/venues/' + b.id)]); expect(details.reduce((sum, response) => sum + response.body.occupancy, 0)).toBe(1);
   });
 
   it('reconciles an expired check-in only once', async () => {
@@ -88,5 +88,19 @@ describe('Checkins lifecycle (e2e)', () => {
     await api().post(`/checkins/${target.id}`).set('Authorization', `Bearer ${user.body.accessToken}`).expect(201);
     const afterSecond = await prisma.venue.findUniqueOrThrow({ where: { id: oldVenue.id } });
     const closed = await prisma.checkin.findUniqueOrThrow({ where: { id: expired.id } });
-    expect(afterFirst.occupancy).toBe(0); expect(afterSecond.occupancy).toBe(0); expect(closed.checkedOutAt).not.toBeNull();
+    expect(afterFirst.occupancy).toBe(1); expect(afterSecond.occupancy).toBe(1); expect(closed.checkedOutAt).not.toBeNull();
+  });  it('derives venue occupancy from active check-ins instead of persisted counter', async () => {
+    const c = await api().post('/auth/register').send({ name: 'Occupancy C', email: `occupancy-c-${Date.now()}@teste.com`, password }).expect(201);
+    const d = await api().post('/auth/register').send({ name: 'Occupancy D', email: `occupancy-d-${Date.now()}@teste.com`, password }).expect(201);
+    const venue = await prisma.venue.create({ data: { name: `Derived Occupancy ${Date.now()}`, category: 'Bar', address: 'Rua', latitude: -23, longitude: -46, occupancy: 99, source: 'IMPORTED', externalProvider: 'FSQ_OS', externalId: `derived-${Date.now()}` } });
+    await api().post(`/checkins/${venue.id}`).set('Authorization', `Bearer ${c.body.accessToken}`).expect(201);
+    await api().post(`/checkins/${venue.id}`).set('Authorization', `Bearer ${d.body.accessToken}`).expect(201);
+    expect((await api().get(`/venues/${venue.id}`)).body.occupancy).toBe(2);
+    const listed = await api().get('/venues').query({ source: 'IMPORTED', limit: 100 }).expect(200); expect(listed.body.find((item: any) => item.id === venue.id).occupancy).toBe(2);
+    await api().patch(`/checkins/${venue.id}/checkout`).set('Authorization', `Bearer ${c.body.accessToken}`).expect(200);
+    expect((await api().get(`/venues/${venue.id}`)).body.occupancy).toBe(1);
+    await prisma.checkin.updateMany({ where: { userId: d.body.user.id, venueId: venue.id, checkedOutAt: null }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    expect((await api().get(`/venues/${venue.id}`)).body.occupancy).toBe(0);
+    await prisma.checkin.create({ data: { userId: c.body.user.id, venueId: venue.id, checkedInAt: new Date(Date.now() - 7200000), expiresAt: null } });
+    expect((await api().get(`/venues/${venue.id}`)).body.occupancy).toBe(0);
   });});

@@ -110,6 +110,15 @@ export class VenuesService {
     return `${distanceKm.toFixed(1)} km`;
   }
 
+  private async getActiveOccupancyByVenueIds(venueIds: string[], now: Date) {
+    if (venueIds.length === 0) return new Map<string, number>();
+    const grouped = await this.prisma.checkin.groupBy({
+      by: ['venueId'],
+      where: { venueId: { in: venueIds }, checkedOutAt: null, expiresAt: { gt: now } },
+      _count: { _all: true },
+    });
+    return new Map(grouped.map((row) => [row.venueId, row._count._all]));
+  }
   /**
    * Converte o Venue do Prisma para o formato
    * consumido pelo frontend.
@@ -145,6 +154,7 @@ export class VenuesService {
       status: 'OPEN' | 'CLOSED';
     },
     distanceKm: number | null = null,
+    occupancyOverride?: number,
   ): VenueResponse {
     const latitude = Number(venue.latitude);
     const longitude = Number(venue.longitude);
@@ -164,7 +174,7 @@ export class VenuesService {
 
       longitude,
 
-      occupancy: venue.occupancy,
+      occupancy: occupancyOverride ?? venue.occupancy,
       capacity: venue.capacity,
       source: venue.source,
       externalProvider: venue.externalProvider,
@@ -194,7 +204,7 @@ export class VenuesService {
 
       distance: this.formatDistance(distanceKm),
 
-      people: venue.occupancy,
+      people: occupancyOverride ?? venue.occupancy,
 
       /**
        * Gallery ainda não existe no schema Prisma.
@@ -244,7 +254,9 @@ export class VenuesService {
       },
     });
 
-    return this.serializeVenue(venue);
+    const occupancy = await this.prisma.checkin.count({ where: { venueId: venue.id, checkedOutAt: null, expiresAt: { gt: new Date() } } });
+
+    return this.serializeVenue(venue, null, occupancy);
   }
 
   /**
@@ -294,6 +306,8 @@ export class VenuesService {
       },
     });
 
+    const activeOccupancyByVenue = await this.getActiveOccupancyByVenueIds(venues.map((venue) => venue.id), new Date());
+
     const hasUserLocation =
       filters.latitude !== undefined && filters.longitude !== undefined;
 
@@ -317,7 +331,7 @@ export class VenuesService {
         }
 
         return {
-          venue: this.serializeVenue(venue, distanceKm),
+          venue: this.serializeVenue(venue, distanceKm, activeOccupancyByVenue.get(venue.id) ?? 0),
 
           distanceKm,
         };
@@ -353,7 +367,9 @@ export class VenuesService {
       throw new NotFoundException('Local não encontrado.');
     }
 
-    return this.serializeVenue(venue);
+    const occupancy = await this.prisma.checkin.count({ where: { venueId: id, checkedOutAt: null, expiresAt: { gt: new Date() } } });
+
+    return this.serializeVenue(venue, null, occupancy);
   }
 
   async update(id: string, updateVenueDto: UpdateVenueDto) {
@@ -435,7 +451,9 @@ export class VenuesService {
       data,
     });
 
-    return this.serializeVenue(venue);
+    const occupancy = await this.prisma.checkin.count({ where: { venueId: id, checkedOutAt: null, expiresAt: { gt: new Date() } } });
+
+    return this.serializeVenue(venue, null, occupancy);
   }
 
   async remove(id: string) {
