@@ -46,7 +46,7 @@ export class UpdateVenueDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  capacity?: number;
+  capacity?: number | null;
 
   @IsOptional()
   @IsString()

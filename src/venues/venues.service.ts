@@ -386,7 +386,7 @@ export class VenuesService {
       latitude?: number;
       longitude?: number;
       occupancy?: number;
-      capacity?: number;
+      capacity?: number | null;
       description?: string;
       image?: string;
       rating?: number;

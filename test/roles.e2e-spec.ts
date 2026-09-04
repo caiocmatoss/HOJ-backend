@@ -59,4 +59,24 @@ describe("Roles and content authority (e2e)", () => {
     await request(app.getHttpServer()).patch(`/events/${eventId}`).set("Authorization", `Bearer ${adminToken}`).send({ title: "Role Event Updated" }).expect(200);
     await request(app.getHttpServer()).delete(`/events/${eventId}`).set("Authorization", `Bearer ${adminToken}`).expect(200);
   });
+
+  it("admin gerencia capacity sem alterar occupancy ou proveniência", async () => {
+    await request(app.getHttpServer()).post(`/checkins/${venueId}`).set("Authorization", `Bearer ${userToken}`).expect(201);
+    const set = await request(app.getHttpServer()).patch(`/venues/${venueId}`).set("Authorization", `Bearer ${adminToken}`).send({ capacity: 10 }).expect(200);
+    expect(set.body).toMatchObject({ occupancy: 1, capacity: 10, occupancyPercent: 10 });
+    const omitted = await request(app.getHttpServer()).patch(`/venues/${venueId}`).set("Authorization", `Bearer ${adminToken}`).send({ description: "Capacity omission check" }).expect(200);
+    expect(omitted.body).toMatchObject({ occupancy: 1, capacity: 10, occupancyPercent: 10 });
+    const changed = await request(app.getHttpServer()).patch(`/venues/${venueId}`).set("Authorization", `Bearer ${adminToken}`).send({ capacity: 20 }).expect(200);
+    expect(changed.body).toMatchObject({ occupancy: 1, capacity: 20, occupancyPercent: 5 });
+    const removed = await request(app.getHttpServer()).patch(`/venues/${venueId}`).set("Authorization", `Bearer ${adminToken}`).send({ capacity: null }).expect(200);
+    expect(removed.body).toMatchObject({ occupancy: 1, capacity: null, occupancyPercent: null });
+    await request(app.getHttpServer()).patch(`/venues/${venueId}`).set("Authorization", `Bearer ${userToken}`).send({ capacity: 10 }).expect(403);
+    const invalidCapacities: Array<number | string> = [0, -1, 1.5, "abc"];
+    for (const capacity of invalidCapacities) {
+      await request(app.getHttpServer()).patch(`/venues/${venueId}`).set("Authorization", `Bearer ${adminToken}`).send({ capacity }).expect(400);
+    }
+    const imported = await prisma.venue.create({ data: { name: `Imported Capacity ${suffix}`, category: "Bar", address: "Rua", latitude: -23, longitude: -46, source: "IMPORTED", externalProvider: "FSQ_OS", externalId: `capacity-${suffix}`, capacity: null } });
+    const importedResponse = await request(app.getHttpServer()).patch(`/venues/${imported.id}`).set("Authorization", `Bearer ${adminToken}`).send({ capacity: 100 }).expect(200);
+    expect(importedResponse.body).toMatchObject({ capacity: 100, source: "IMPORTED", externalProvider: "FSQ_OS", externalId: `capacity-${suffix}` });
+  });
 });
