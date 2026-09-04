@@ -24,6 +24,7 @@
     "dev:audit:test-residue": "node scripts/audit-dev-test-residue.cjs",
     "dev:cleanup:manifest": "node scripts/build-dev-cleanup-manifest.cjs",
     "dev:cleanup": "node scripts/execute-dev-cleanup.cjs",
+    "dev:cleanup:review": "node scripts/build-dev-cleanup-review.cjs",
     "venues:import:fsq": "node scripts/import-fsq-os-places.cjs",
     "venues:export:fsq": "node scripts/export-fsq-os-places.cjs"
   },
