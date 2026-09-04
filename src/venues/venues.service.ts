@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
+import { getOccupancyPercent } from './occupancy-percent';
 
 type VenueListFilters = {
   q?: string;
@@ -29,6 +30,7 @@ type VenueResponse = {
   longitude: number;
   occupancy: number;
   capacity: number | null;
+  occupancyPercent: number | null;
   source: 'MANUAL' | 'IMPORTED';
   externalProvider: string | null;
   externalId: string | null;
@@ -176,6 +178,7 @@ export class VenuesService {
 
       occupancy: occupancyOverride ?? venue.occupancy,
       capacity: venue.capacity,
+      occupancyPercent: getOccupancyPercent(occupancyOverride ?? venue.occupancy, venue.capacity),
       source: venue.source,
       externalProvider: venue.externalProvider,
       externalId: venue.externalId,
@@ -306,7 +309,8 @@ export class VenuesService {
       },
     });
 
-    const activeOccupancyByVenue = await this.getActiveOccupancyByVenueIds(venues.map((venue) => venue.id), new Date());
+    const now = new Date();
+    const activeOccupancyByVenue = await this.getActiveOccupancyByVenueIds(venues.map((venue) => venue.id), now);
 
     const hasUserLocation =
       filters.latitude !== undefined && filters.longitude !== undefined;

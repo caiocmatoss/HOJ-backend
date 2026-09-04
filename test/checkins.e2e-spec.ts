@@ -14,14 +14,15 @@ describe('Checkins lifecycle (e2e)', () => {
     app = moduleFixture.createNestApplication(); app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })); await app.init(); prisma = app.get(PrismaService);
     const a = await api().post('/auth/register').send({ name: 'Checkin A', email: `checkin-a-${suffix}@teste.com`, password }).expect(201); tokenA = a.body.accessToken; userA = a.body.user.id;
     const b = await api().post('/auth/register').send({ name: 'Checkin B', email: `checkin-b-${suffix}@teste.com`, password }).expect(201); tokenB = b.body.accessToken; userB = b.body.user.id;
-    const fields = { category: 'Bar', address: 'Rua Checkin', latitude: -23, longitude: -46, occupancy: 0 };
+    const fields = { category: 'Bar', address: 'Rua Checkin', latitude: -23, longitude: -46, occupancy: 0, capacity: 10 };
     manual = (await prisma.venue.create({ data: { ...fields, name: `Checkin Manual ${suffix}`, source: 'MANUAL' } })).id;
-    imported = (await prisma.venue.create({ data: { ...fields, name: `Checkin Imported ${suffix}`, source: 'IMPORTED', externalProvider: 'FSQ_OS', externalId: `checkin-${suffix}` } })).id;
+    imported = (await prisma.venue.create({ data: { ...fields, name: `Checkin Imported ${suffix}`, source: 'IMPORTED', capacity: null, externalProvider: 'FSQ_OS', externalId: `checkin-${suffix}` } })).id;
   });
   afterAll(async () => { await app.close(); });
   it('creates and reads an active check-in with expiry', async () => {
     const created = await api().post(`/checkins/${manual}`).set('Authorization', `Bearer ${tokenA}`).expect(201);
     expect(created.body.checkin).toEqual(expect.objectContaining({ userId: userA, venueId: manual, checkedOutAt: null, expiresAt: expect.any(String) }));
+    expect(created.body.venue).toEqual(expect.objectContaining({ occupancy: 1, capacity: 10, occupancyPercent: 10 }));
     await api().get('/checkins/me').set('Authorization', `Bearer ${tokenA}`).expect(200).expect((r) => expect(r.body.id).toBe(created.body.checkin.id));
   });
   it('is idempotent for the same venue and does not duplicate occupancy', async () => {
@@ -92,15 +93,20 @@ describe('Checkins lifecycle (e2e)', () => {
   });  it('derives venue occupancy from active check-ins instead of persisted counter', async () => {
     const c = await api().post('/auth/register').send({ name: 'Occupancy C', email: `occupancy-c-${Date.now()}@teste.com`, password }).expect(201);
     const d = await api().post('/auth/register').send({ name: 'Occupancy D', email: `occupancy-d-${Date.now()}@teste.com`, password }).expect(201);
-    const venue = await prisma.venue.create({ data: { name: `Derived Occupancy ${Date.now()}`, category: 'Bar', address: 'Rua', latitude: -23, longitude: -46, occupancy: 99, source: 'IMPORTED', externalProvider: 'FSQ_OS', externalId: `derived-${Date.now()}` } });
+    const venue = await prisma.venue.create({ data: { name: `Derived Occupancy ${Date.now()}`, category: 'Bar', address: 'Rua', latitude: -23, longitude: -46, occupancy: 99, capacity: 1, source: 'IMPORTED', externalProvider: 'FSQ_OS', externalId: `derived-${Date.now()}` } });
     await api().post(`/checkins/${venue.id}`).set('Authorization', `Bearer ${c.body.accessToken}`).expect(201);
     await api().post(`/checkins/${venue.id}`).set('Authorization', `Bearer ${d.body.accessToken}`).expect(201);
-    expect((await api().get(`/venues/${venue.id}`)).body.occupancy).toBe(2);
-    const listed = await api().get('/venues').query({ source: 'IMPORTED', limit: 100 }).expect(200); expect(listed.body.find((item: any) => item.id === venue.id).occupancy).toBe(2);
+    const detailAtTwo = await api().get(`/venues/${venue.id}`); expect(detailAtTwo.body.occupancy).toBe(2); expect(detailAtTwo.body.occupancyPercent).toBe(200);
+    const listed = await api().get('/venues').query({ source: 'IMPORTED', limit: 100 }).expect(200); expect(listed.body.find((item: any) => item.id === venue.id).occupancy).toBe(2); expect(listed.body.find((item: any) => item.id === venue.id).occupancyPercent).toBe(200);
     await api().patch(`/checkins/${venue.id}/checkout`).set('Authorization', `Bearer ${c.body.accessToken}`).expect(200);
-    expect((await api().get(`/venues/${venue.id}`)).body.occupancy).toBe(1);
+    const detailAtOne = await api().get(`/venues/${venue.id}`); expect(detailAtOne.body.occupancy).toBe(1); expect(detailAtOne.body.occupancyPercent).toBe(100);
     await prisma.checkin.updateMany({ where: { userId: d.body.user.id, venueId: venue.id, checkedOutAt: null }, data: { expiresAt: new Date(Date.now() - 1000) } });
-    expect((await api().get(`/venues/${venue.id}`)).body.occupancy).toBe(0);
+    const detailAtZero = await api().get(`/venues/${venue.id}`); expect(detailAtZero.body.occupancy).toBe(0); expect(detailAtZero.body.occupancyPercent).toBe(0);
     await prisma.checkin.create({ data: { userId: c.body.user.id, venueId: venue.id, checkedInAt: new Date(Date.now() - 7200000), expiresAt: null } });
-    expect((await api().get(`/venues/${venue.id}`)).body.occupancy).toBe(0);
-  });});
+
+    const importedWithoutCapacity = await prisma.venue.create({ data: { name: `Imported No Capacity ${Date.now()}`, category: 'Bar', address: 'Rua', latitude: -23, longitude: -46, occupancy: 99, capacity: null, source: 'IMPORTED', capacity: null, externalProvider: 'FSQ_OS', externalId: `no-cap-${Date.now()}` } });
+    await api().post(`/checkins/${importedWithoutCapacity.id}`).set('Authorization', `Bearer ${c.body.accessToken}`).expect(201);
+    const noCapacityDetail = await api().get(`/venues/${importedWithoutCapacity.id}`);
+    expect(noCapacityDetail.body.occupancy).toBe(1);
+    expect(noCapacityDetail.body.capacity).toBeNull();
+    expect(noCapacityDetail.body.occupancyPercent).toBeNull();  });});

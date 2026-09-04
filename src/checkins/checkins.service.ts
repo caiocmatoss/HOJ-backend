@@ -2,9 +2,10 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getCheckinExpiry, getCheckinTtlMinutes } from './checkin-lifecycle';
+import { getOccupancyPercent } from '../venues/occupancy-percent';
 
 const userSelect = { id: true, name: true, email: true, avatar: true, bio: true, status: true } as const;
-const venueSelect = { id: true, name: true, category: true, address: true, latitude: true, longitude: true, occupancy: true, status: true } as const;
+const venueSelect = { id: true, name: true, category: true, address: true, latitude: true, longitude: true, occupancy: true, capacity: true, status: true } as const;
 const MAX_SERIALIZABLE_RETRIES = 3;
 
 async function serializableTransaction<T>(prisma: PrismaService, callback: (tx: any) => Promise<T>): Promise<T> {
@@ -38,26 +39,26 @@ export class CheckinsService {
       const active = await tx.checkin.findFirst({ where: { userId, checkedOutAt: null, expiresAt: { gt: now } }, orderBy: { checkedInAt: 'desc' } });
       if (active?.venueId === venueId) {
         const checkin = await tx.checkin.update({ where: { id: active.id }, data: { expiresAt }, include: { user: { select: userSelect }, venue: { select: venueSelect } } });
-        const currentVenue = await tx.venue.findUnique({ where: { id: venueId }, select: { id: true, name: true, occupancy: true } });
+        const currentVenue = await tx.venue.findUnique({ where: { id: venueId }, select: { id: true, name: true, occupancy: true, capacity: true } });
         const activeOccupancy = await tx.checkin.count({ where: { venueId, checkedOutAt: null, expiresAt: { gt: now } } });
-        return { checkin: { ...checkin, venue: { ...checkin.venue, occupancy: activeOccupancy } }, venue: currentVenue ? { ...currentVenue, occupancy: activeOccupancy } : currentVenue };
+        return { checkin: { ...checkin, venue: { ...checkin.venue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, checkin.venue?.capacity) } }, venue: currentVenue ? { ...currentVenue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, currentVenue.capacity) } : currentVenue };
       }
       if (active) {
         await tx.checkin.update({ where: { id: active.id }, data: { checkedOutAt: now } });
       }
       const checkin = await tx.checkin.create({ data: { userId, venueId, checkedInAt: now, expiresAt }, include: { user: { select: userSelect }, venue: { select: venueSelect } } });
-      const currentVenue = await tx.venue.findUnique({ where: { id: venueId }, select: { id: true, name: true, occupancy: true } });
+      const currentVenue = await tx.venue.findUnique({ where: { id: venueId }, select: { id: true, name: true, occupancy: true, capacity: true } });
       const activeOccupancy = await tx.checkin.count({ where: { venueId, checkedOutAt: null, expiresAt: { gt: now } } });
-      return { checkin: { ...checkin, venue: { ...checkin.venue, occupancy: activeOccupancy } }, venue: currentVenue ? { ...currentVenue, occupancy: activeOccupancy } : currentVenue };
+      return { checkin: { ...checkin, venue: { ...checkin.venue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, checkin.venue?.capacity) } }, venue: currentVenue ? { ...currentVenue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, currentVenue.capacity) } : currentVenue };
     });
   }
 
   async getMyActiveCheckin(userId: string) {
     const now = new Date();
-    const checkin = await this.prisma.checkin.findFirst({ where: { userId, checkedOutAt: null, expiresAt: { gt: now } }, include: { venue: { select: { id: true, name: true, category: true, address: true, latitude: true, longitude: true, occupancy: true, image: true, rating: true, status: true } } }, orderBy: { checkedInAt: 'desc' } });
+    const checkin = await this.prisma.checkin.findFirst({ where: { userId, checkedOutAt: null, expiresAt: { gt: now } }, include: { venue: { select: { id: true, name: true, category: true, address: true, latitude: true, longitude: true, occupancy: true, capacity: true, image: true, rating: true, status: true } } }, orderBy: { checkedInAt: 'desc' } });
     if (!checkin) return checkin;
     const occupancy = await this.prisma.checkin.count({ where: { venueId: checkin.venueId, checkedOutAt: null, expiresAt: { gt: now } } });
-    return { ...checkin, venue: { ...checkin.venue, occupancy } };
+    return { ...checkin, venue: { ...checkin.venue, occupancy, occupancyPercent: getOccupancyPercent(occupancy, checkin.venue?.capacity) } };
   }
   async getVenueCheckins(userId: string, venueId: string) {
     const venue = await this.prisma.venue.findUnique({ where: { id: venueId }, select: { id: true } });
@@ -70,10 +71,10 @@ export class CheckinsService {
     return serializableTransaction(this.prisma, async (tx) => {
       const checkin = await tx.checkin.findFirst({ where: { userId, venueId, checkedOutAt: null, expiresAt: { gt: now } }, orderBy: { checkedInAt: 'desc' } });
       if (!checkin) throw new NotFoundException('Check-in ativo não encontrado.');
-      const updatedCheckin = await tx.checkin.update({ where: { id: checkin.id }, data: { checkedOutAt: now }, include: { user: { select: userSelect }, venue: { select: { id: true, name: true, occupancy: true } } } });
-      const updatedVenue = await tx.venue.findUnique({ where: { id: venueId }, select: { id: true, name: true, occupancy: true } });
+      const updatedCheckin = await tx.checkin.update({ where: { id: checkin.id }, data: { checkedOutAt: now }, include: { user: { select: userSelect }, venue: { select: { id: true, name: true, occupancy: true, capacity: true } } } });
+      const updatedVenue = await tx.venue.findUnique({ where: { id: venueId }, select: { id: true, name: true, occupancy: true, capacity: true } });
       const activeOccupancy = await tx.checkin.count({ where: { venueId, checkedOutAt: null, expiresAt: { gt: now } } });
-      return { checkin: { ...updatedCheckin, venue: { ...updatedCheckin.venue, occupancy: activeOccupancy } }, venue: updatedVenue ? { ...updatedVenue, occupancy: activeOccupancy } : updatedVenue };
+      return { checkin: { ...updatedCheckin, venue: { ...updatedCheckin.venue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, updatedCheckin.venue?.capacity) } }, venue: updatedVenue ? { ...updatedVenue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, updatedVenue.capacity) } : updatedVenue };
     });
   }
 
