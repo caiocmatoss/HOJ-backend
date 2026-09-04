@@ -20,3 +20,17 @@ export function validateApproval(manifest: { database: string; records: Manifest
 }
 
 export function relationCount(record: ManifestRecord): number { return Object.values(record.relations ?? {}).reduce((sum, count) => sum + Number(count || 0), 0); }
+export function validateExecutionFlags(
+  execute: boolean,
+  confirmDatabase: string | undefined,
+  confirmManifestSha: string | undefined,
+  confirmAction: string | undefined,
+  expectedHash: string,
+): string[] {
+  if (!execute) return [];
+  const errors: string[] = [];
+  if (confirmDatabase !== "hojeond") errors.push("--confirm-database hojeond is required.");
+  if (confirmManifestSha !== expectedHash) errors.push("Manifest confirmation hash does not match.");
+  if (confirmAction !== "REMOVE-8-REVIEWED-E2E-FIXTURES") errors.push("Explicit action confirmation is required.");
+  return errors;
+}

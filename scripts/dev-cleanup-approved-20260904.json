@@ -1,12 +1,47 @@
 {
-  "approved": [
-    { "entity": "User", "id": "cmtcio3wn00006onjt9yqnxpl", "reason": "Reviewed E2E fixture without relations" },
-    { "entity": "User", "id": "cmtcj182q00004onjgr1hwrli", "reason": "Reviewed E2E fixture without relations" },
-    { "entity": "Venue", "id": "cmtci8l4n0004xonjeehvtu2k", "reason": "Reviewed E2E fixture without relations" },
-    { "entity": "Venue", "id": "cmtcif34b0004uknjl5p8i2xt", "reason": "Reviewed E2E fixture without relations" },
-    { "entity": "Venue", "id": "cmtcimlap00046onjvz9nrg5x", "reason": "Reviewed E2E fixture without relations" },
-    { "entity": "Venue", "id": "cmtcio4a400016onj8z6xhhef", "reason": "Reviewed E2E fixture without relations" },
-    { "entity": "Venue", "id": "cmtcj15nc00044onj46ujfie3", "reason": "Reviewed E2E fixture without relations" },
-    { "entity": "Venue", "id": "cmtcj18fu00014onjsav795e2", "reason": "Reviewed E2E fixture without relations" }
-  ]
+    "schemaVersion":  1,
+    "database":  "hojeond",
+    "manifestSha256":  "073ed2e5538356c884deb57c70281eb890478330035909cacb94feab5e385e2e",
+    "approved":  [
+                     {
+                         "entity":  "User",
+                         "id":  "cmtcio3wn00006onjt9yqnxpl",
+                         "reason":  "Reviewed E2E fixture without relations"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmtcj182q00004onjgr1hwrli",
+                         "reason":  "Reviewed E2E fixture without relations"
+                     },
+                     {
+                         "entity":  "Venue",
+                         "id":  "cmtci8l4n0004xonjeehvtu2k",
+                         "reason":  "Reviewed E2E fixture without relations"
+                     },
+                     {
+                         "entity":  "Venue",
+                         "id":  "cmtcif34b0004uknjl5p8i2xt",
+                         "reason":  "Reviewed E2E fixture without relations"
+                     },
+                     {
+                         "entity":  "Venue",
+                         "id":  "cmtcimlap00046onjvz9nrg5x",
+                         "reason":  "Reviewed E2E fixture without relations"
+                     },
+                     {
+                         "entity":  "Venue",
+                         "id":  "cmtcio4a400016onj8z6xhhef",
+                         "reason":  "Reviewed E2E fixture without relations"
+                     },
+                     {
+                         "entity":  "Venue",
+                         "id":  "cmtcj15nc00044onj46ujfie3",
+                         "reason":  "Reviewed E2E fixture without relations"
+                     },
+                     {
+                         "entity":  "Venue",
+                         "id":  "cmtcj18fu00014onjsav795e2",
+                         "reason":  "Reviewed E2E fixture without relations"
+                     }
+                 ]
 }

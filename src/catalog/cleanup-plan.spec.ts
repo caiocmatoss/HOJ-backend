@@ -1,4 +1,4 @@
-import { manifestHash, relationCount, validateApproval } from "./cleanup-plan";
+import { manifestHash, relationCount, validateApproval, validateExecutionFlags } from "./cleanup-plan";
 
 const expected = [
   { entity: "User", id: "u1" },
@@ -14,6 +14,12 @@ describe("controlled cleanup plan", () => {
   });
   it("rejects a non-catalog database", () => {
     expect(validateApproval({ database: "hojeond_e2e", records: [] }, [], expected)).toContain("Manifest database must be hojeond.");
+  });
+  it("requires all execution confirmations", () => {
+    const hash = "a".repeat(64);
+    expect(validateExecutionFlags(true, "hojeond", hash, "REMOVE-8-REVIEWED-E2E-FIXTURES", hash)).toEqual([]);
+    expect(validateExecutionFlags(true, undefined, hash, undefined, hash).length).toBe(2);
+    expect(validateExecutionFlags(true, "wrong", "b".repeat(64), "wrong", hash).length).toBe(3);
   });
   it("hashes deterministically and counts relations", () => {
     expect(manifestHash(Buffer.from("same"))).toBe(manifestHash(Buffer.from("same")));
