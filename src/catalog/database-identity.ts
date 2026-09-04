@@ -17,6 +17,9 @@ export function resolveDatabaseConfig(
   return { url, source, name: databaseNameFromUrl(url) };
 }
 
+export function assertE2EDatabaseName(name: string): void {
+  if (name !== "hojeond_e2e") throw new Error(`Refusing to run E2E against database "${name}". Expected "hojeond_e2e".`);
+}
 export function assertCatalogDatabase(name: string): void {
   if (name === "hojeond_e2e") {
     throw new Error("Refusing catalog duplicate audit against E2E database. Use the development/catalog database.");

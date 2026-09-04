@@ -1,4 +1,4 @@
-import { assertCatalogDatabase, databaseNameFromUrl, resolveDatabaseConfig } from "./database-identity";
+import { assertCatalogDatabase, assertE2EDatabaseName, databaseNameFromUrl, resolveDatabaseConfig } from "./database-identity";
 
 describe("database identity guard", () => {
   it("extracts database name without exposing credentials", () => {
@@ -12,6 +12,11 @@ describe("database identity guard", () => {
     expect(resolveDatabaseConfig({}, { DATABASE_URL: "postgresql://u:p@localhost/hojeond" })).toMatchObject({ source: ".env", name: "hojeond" });
   });
 
+  it("allows only the E2E database for E2E guard", () => {
+    expect(() => assertE2EDatabaseName("hojeond_e2e")).not.toThrow();
+    expect(() => assertE2EDatabaseName("hojeond")).toThrow('database "hojeond"');
+    expect(() => assertE2EDatabaseName("other")).toThrow('database "other"');
+  });
   it("allows the catalog database", () => {
     expect(() => assertCatalogDatabase("hojeond")).not.toThrow();
   });
