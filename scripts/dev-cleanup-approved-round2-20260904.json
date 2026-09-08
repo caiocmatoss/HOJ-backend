@@ -1,0 +1,77 @@
+{
+    "schemaVersion":  1,
+    "approvalType":  "HUMAN_REVIEWED_TEST_RESIDUE",
+    "reason":  "Second reviewed cleanup round",
+    "database":  "hojeond",
+    "manifestSha256":  "c64416d6b463a84c5bb5997b2b5fd363ae82d59e3dfd4c7a51eea61fd716deb5",
+    "approved":  [
+                     {
+                         "entity":  "User",
+                         "id":  "cmti6v1qk0000n8njgwuh46zt"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti6v1ww0001n8nj9zhr93o9"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti6y0l60000vcnjiuf0dzwf"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti6y0ri0001vcnjdvc5d35y"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti7axhr0000acnjqvohgghr"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti7crhm0000awnjw1kf1b57"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti7trdm0000pknj7j5rvo8v"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti7uyh80000qknjik2b8fk4"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti8f1wt0001qknj9vsby1l3"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti8f9ah0002qknja5o8h32n"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmti8gdms0000ucnjw5usl1cr"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmtmcw5o7000014njz5vzrkmv"
+                     },
+                     {
+                         "entity":  "Checkin",
+                         "id":  "cmtmcw5q2000114njpzypo5yd"
+                     },
+                     {
+                         "entity":  "Checkin",
+                         "id":  "cmtmcw6kx000214njecz76ev3"
+                     },
+                     {
+                         "entity":  "User",
+                         "id":  "cmtmigemy000028njtd5vz6a0"
+                     },
+                     {
+                         "entity":  "Checkin",
+                         "id":  "cmtmirgis000128nj29p7jsmg"
+                     },
+                     {
+                         "entity":  "Checkin",
+                         "id":  "cmtmiwyn4000228njsexx1ngc"
+                     }
+                 ]
+}

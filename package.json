@@ -25,6 +25,8 @@
     "dev:cleanup:manifest": "node scripts/build-dev-cleanup-manifest.cjs",
     "dev:cleanup": "node scripts/execute-dev-cleanup.cjs",
     "dev:cleanup:review": "node scripts/build-dev-cleanup-review.cjs",
+    "dev:cleanup:round2:manifest": "node scripts/build-dev-cleanup-round2.cjs",
+    "dev:cleanup:round2": "node scripts/execute-dev-cleanup-round2.cjs",
     "venues:import:fsq": "node scripts/import-fsq-os-places.cjs",
     "venues:export:fsq": "node scripts/export-fsq-os-places.cjs"
   },
