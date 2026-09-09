@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthMailService } from './auth-mail.service';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -19,6 +20,7 @@ describe('AuthService', () => {
           provide: JwtService,
           useValue: {},
         },
+        { provide: AuthMailService, useValue: { sendPasswordReset: jest.fn(), sendEmailVerification: jest.fn() } },
       ],
     }).compile();
 

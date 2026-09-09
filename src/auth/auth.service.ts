@@ -1,8 +1,10 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
+import { AuthMailService } from './auth-mail.service';
+import { actionTokenExpiry, generateAuthActionToken, hashAuthActionToken } from './auth-action-token';
 import { LoginDto } from './dto/login.dto';
 import {
   generateRefreshToken,
@@ -13,14 +15,14 @@ import {
 
 const PUBLIC_USER_SELECT = {
   id: true, name: true, email: true, username: true, city: true, phone: true,
-  avatar: true, bio: true, status: true, role: true, createdAt: true, updatedAt: true,
+  avatar: true, bio: true, status: true, role: true, emailVerifiedAt: true, createdAt: true, updatedAt: true,
 } as const;
 
-type PublicUser = { id: string; name: string; email: string; username: string | null; city: string | null; phone: string | null; avatar: string | null; bio: string | null; status: string; role: 'USER' | 'ADMIN'; createdAt: Date; updatedAt: Date };
+type PublicUser = { id: string; name: string; email: string; username: string | null; city: string | null; phone: string | null; avatar: string | null; bio: string | null; status: string; emailVerifiedAt: Date | null; role: 'USER' | 'ADMIN'; createdAt: Date; updatedAt: Date };
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService, private readonly jwtService: JwtService) {}
+  constructor(private readonly prisma: PrismaService, private readonly jwtService: JwtService, private readonly mail: AuthMailService) {}
 
   async register(dto: RegisterDto) {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
@@ -103,6 +105,60 @@ export class AuthService {
     });
   }
 
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    const message = 'Se a conta existir, as instruções serão enviadas.';
+    const user = await this.prisma.user.findUnique({ where: { email }, select: { id: true, email: true } });
+    if (!user) return { message };
+    const plain = generateAuthActionToken();
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.authActionToken.updateMany({ where: { userId: user.id, type: 'PASSWORD_RESET', consumedAt: null, revokedAt: null }, data: { revokedAt: now } });
+      await tx.authActionToken.create({ data: { userId: user.id, type: 'PASSWORD_RESET', tokenHash: hashAuthActionToken(plain), expiresAt: actionTokenExpiry(now, 'PASSWORD_RESET') } });
+    });
+    try { await this.mail.sendPasswordReset(user.email, plain); } catch { await this.prisma.authActionToken.updateMany({ where: { userId: user.id, type: 'PASSWORD_RESET', tokenHash: hashAuthActionToken(plain) }, data: { revokedAt: new Date() } }); }
+    return { message };
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    const now = new Date();
+    const hash = hashAuthActionToken(token);
+    await this.prisma.$transaction(async (tx) => {
+      const action = await tx.authActionToken.findUnique({ where: { tokenHash: hash } });
+      if (!action || action.type !== 'PASSWORD_RESET' || action.consumedAt || action.revokedAt || action.expiresAt <= now) throw new UnauthorizedException('Token de recuperação inválido.');
+      const claimed = await tx.authActionToken.updateMany({ where: { id: action.id, type: 'PASSWORD_RESET', consumedAt: null, revokedAt: null, expiresAt: { gt: now } }, data: { consumedAt: now } });
+      if (claimed.count !== 1) throw new UnauthorizedException('Token de recuperação inválido.');
+      const user = await tx.user.findUnique({ where: { id: action.userId }, select: { id: true } });
+      if (!user) throw new UnauthorizedException('Token de recuperação inválido.');
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+      await tx.authActionToken.updateMany({ where: { userId: user.id, type: 'PASSWORD_RESET', id: { not: action.id }, consumedAt: null, revokedAt: null }, data: { revokedAt: now } });
+      const sessions = await tx.authSession.findMany({ where: { userId: user.id, revokedAt: null }, select: { id: true } });
+      const ids = sessions.map((session) => session.id);
+      if (ids.length) { await tx.authSession.updateMany({ where: { id: { in: ids } }, data: { revokedAt: now } }); await tx.authRefreshToken.updateMany({ where: { sessionId: { in: ids }, revokedAt: null }, data: { revokedAt: now } }); }
+    });
+  }
+
+  async requestEmailVerification(userId: string): Promise<{ message: string }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true, emailVerifiedAt: true } });
+    if (!user) throw new UnauthorizedException('Usuário inválido.');
+    if (user.emailVerifiedAt) return { message: 'E-mail já verificado.' };
+    const plain = generateAuthActionToken(); const now = new Date();
+    await this.prisma.$transaction(async (tx) => { await tx.authActionToken.updateMany({ where: { userId, type: 'EMAIL_VERIFICATION', consumedAt: null, revokedAt: null }, data: { revokedAt: now } }); await tx.authActionToken.create({ data: { userId, type: 'EMAIL_VERIFICATION', tokenHash: hashAuthActionToken(plain), expiresAt: actionTokenExpiry(now, 'EMAIL_VERIFICATION') } }); });
+    try { await this.mail.sendEmailVerification(user.email, plain); } catch { await this.prisma.authActionToken.updateMany({ where: { userId, type: 'EMAIL_VERIFICATION', tokenHash: hashAuthActionToken(plain) }, data: { revokedAt: new Date() } }); throw new ServiceUnavailableException('Não foi possível enviar o e-mail de verificação.'); }
+    return { message: 'Instruções de verificação enviadas.' };
+  }
+
+  async confirmEmailVerification(token: string): Promise<void> {
+    const now = new Date(); const hash = hashAuthActionToken(token);
+    await this.prisma.$transaction(async (tx) => {
+      const action = await tx.authActionToken.findUnique({ where: { tokenHash: hash } });
+      if (!action || action.type !== 'EMAIL_VERIFICATION' || action.consumedAt || action.revokedAt || action.expiresAt <= now) throw new UnauthorizedException('Token de verificação inválido.');
+      const claimed = await tx.authActionToken.updateMany({ where: { id: action.id, type: 'EMAIL_VERIFICATION', consumedAt: null, revokedAt: null, expiresAt: { gt: now } }, data: { consumedAt: now } });
+      if (claimed.count !== 1) throw new UnauthorizedException('Token de verificação inválido.');
+      await tx.user.update({ where: { id: action.userId }, data: { emailVerifiedAt: now } });
+      await tx.authActionToken.updateMany({ where: { userId: action.userId, type: 'EMAIL_VERIFICATION', id: { not: action.id }, consumedAt: null, revokedAt: null }, data: { revokedAt: now } });
+    });
+  }
   async getCurrentUser(userId: string) {
     return this.prisma.user.findUnique({ where: { id: userId }, select: PUBLIC_USER_SELECT });
   }

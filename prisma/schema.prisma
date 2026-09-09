@@ -57,19 +57,20 @@ enum LocationUpdateFrequency {
 }
 
 model User {
-  id           String     @id @default(cuid())
-  name         String
-  email        String     @unique
-  username     String?    @unique
-  city         String?
-  phone        String?
-  passwordHash String?
-  avatar       String?
-  bio          String?
-  status       UserStatus @default(OFFLINE)
-  role         UserRole   @default(USER)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id              String     @id @default(cuid())
+  name            String
+  email           String     @unique
+  username        String?    @unique
+  city            String?
+  phone           String?
+  passwordHash    String?
+  avatar          String?
+  bio             String?
+  status          UserStatus @default(OFFLINE)
+  role            UserRole   @default(USER)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  emailVerifiedAt DateTime?
 
   friendshipsSent     Friendship[] @relation("FriendshipRequester")
   friendshipsReceived Friendship[] @relation("FriendshipAddressee")
@@ -95,6 +96,7 @@ model User {
   locationPreferences     LocationPreferences?
   privacyPreferences      PrivacyPreferences?
   authSessions            AuthSession[]
+  authActionTokens        AuthActionToken[]
 
   @@index([name])
   @@index([status])
@@ -411,4 +413,26 @@ model AuthRefreshToken {
 
   @@index([sessionId])
   @@index([expiresAt])
+}
+
+model AuthActionToken {
+  id         String              @id @default(cuid())
+  userId     String
+  type       AuthActionTokenType
+  tokenHash  String              @unique
+  createdAt  DateTime            @default(now())
+  expiresAt  DateTime
+  consumedAt DateTime?
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([expiresAt])
+}
+
+enum AuthActionTokenType {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
 }
