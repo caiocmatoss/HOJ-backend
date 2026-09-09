@@ -98,15 +98,6 @@ export class MessagesGateway implements OnGatewayInit {
         );
       },
     );
-
-    server.on(
-      'connection',
-      (socket: Socket) => {
-        void this.handleSocketConnection(
-          socket as AppSocket,
-        );
-      },
-    );
   }
 
   private async authenticateSocket(

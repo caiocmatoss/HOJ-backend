@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import type { StringValue } from 'ms';
+const accessTokenTtl: StringValue = (process.env.ACCESS_TOKEN_TTL ?? '15m') as StringValue;
 import { PassportModule } from '@nestjs/passport';
 
 import { PrismaModule } from '../prisma/prisma.module';
@@ -18,7 +20,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       secret: process.env.JWT_SECRET,
 
       signOptions: {
-        expiresIn: '7d',
+        expiresIn: accessTokenTtl,
       },
     }),
   ],

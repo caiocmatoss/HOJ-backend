@@ -1,31 +1,21 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
-
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
-
 import { AuthService } from './auth.service';
-
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
-
-  @Post('register')
-  register(@Body() registerDto: RegisterDto) {
-    return this.authService.register(registerDto);
+  @Post('register') register(@Body() dto: RegisterDto) { return this.authService.register(dto); }
+  @Post('login') login(@Body() dto: LoginDto) { return this.authService.login(dto); }
+  @Post('refresh') refresh(@Body() dto: RefreshTokenDto) { return this.authService.refresh(dto.refreshToken); }
+  @Post('logout') @HttpCode(HttpStatus.NO_CONTENT) async logout(@Body() dto: RefreshTokenDto): Promise<void> { await this.authService.logout(dto.refreshToken); }
+  @Post('logout-all') @UseGuards(JwtAuthGuard) @HttpCode(HttpStatus.NO_CONTENT) async logoutAll(@Req() request: Request): Promise<void> {
+    const user = request.user as { sub?: string };
+    if (user?.sub) await this.authService.logoutAll(user.sub);
   }
-
-  @Post('login')
-  login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto);
-  }
-
-  @Get('me')
-  @UseGuards(JwtAuthGuard)
-  getMe(@Req() request: Request) {
-    return request.user;
-  }
+  @Get('me') @UseGuards(JwtAuthGuard) getMe(@Req() request: Request) { return request.user; }
 }

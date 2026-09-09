@@ -104,9 +104,11 @@ describe('Checkins lifecycle (e2e)', () => {
     const detailAtZero = await api().get(`/venues/${venue.id}`); expect(detailAtZero.body.occupancy).toBe(0); expect(detailAtZero.body.occupancyPercent).toBe(0);
     await prisma.checkin.create({ data: { userId: c.body.user.id, venueId: venue.id, checkedInAt: new Date(Date.now() - 7200000), expiresAt: null } });
 
-    const importedWithoutCapacity = await prisma.venue.create({ data: { name: `Imported No Capacity ${Date.now()}`, category: 'Bar', address: 'Rua', latitude: -23, longitude: -46, occupancy: 99, capacity: null, source: 'IMPORTED', capacity: null, externalProvider: 'FSQ_OS', externalId: `no-cap-${Date.now()}` } });
+    const importedWithoutCapacity = await prisma.venue.create({ data: { name: `Imported No Capacity ${Date.now()}`, category: 'Bar', address: 'Rua', latitude: -23, longitude: -46, occupancy: 99, capacity: null, source: 'IMPORTED', externalProvider: 'FSQ_OS', externalId: `no-cap-${Date.now()}` } });
     await api().post(`/checkins/${importedWithoutCapacity.id}`).set('Authorization', `Bearer ${c.body.accessToken}`).expect(201);
     const noCapacityDetail = await api().get(`/venues/${importedWithoutCapacity.id}`);
     expect(noCapacityDetail.body.occupancy).toBe(1);
     expect(noCapacityDetail.body.capacity).toBeNull();
-    expect(noCapacityDetail.body.occupancyPercent).toBeNull();  });});
+    expect(noCapacityDetail.body.occupancyPercent).toBeNull();
+  });
+});

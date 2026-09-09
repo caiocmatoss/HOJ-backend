@@ -18,6 +18,7 @@ interface AuthUser {
 interface AuthResponse {
   user: AuthUser;
   accessToken: string;
+  refreshToken: string;
 }
 
 interface UserResponse {
@@ -180,6 +181,31 @@ describe('HOJÉ OND Backend (e2e)', () => {
       expect(typeof body.accessToken).toBe('string');
 
       accessToken = body.accessToken;
+    });
+
+    it('POST /auth/refresh deve rotacionar e detectar reuse', async () => {
+      const login = await api().post('/auth/login').send({ email: testEmail, password: testPassword }).expect(201);
+      const rotated = await api().post('/auth/refresh').send({ refreshToken: login.body.refreshToken }).expect(201);
+      expect(rotated.body.accessToken).toEqual(expect.any(String));
+      expect(rotated.body.refreshToken).toEqual(expect.any(String));
+      await api().post('/auth/refresh').send({ refreshToken: login.body.refreshToken }).expect(401);
+      await api().post('/auth/refresh').send({ refreshToken: rotated.body.refreshToken }).expect(401);
+    });
+
+    it('POST /auth/refresh concorrente consome o token uma única vez', async () => {
+      const login = await api().post('/auth/login').send({ email: testEmail, password: testPassword }).expect(201);
+      const results = await Promise.all([
+        api().post('/auth/refresh').send({ refreshToken: login.body.refreshToken }),
+        api().post('/auth/refresh').send({ refreshToken: login.body.refreshToken }),
+      ]);
+      expect(results.filter((result) => result.status === 201)).toHaveLength(1);
+      expect(results.filter((result) => result.status === 401)).toHaveLength(1);
+    });
+
+    it('POST /auth/logout revoga a sessão', async () => {
+      const login = await api().post('/auth/login').send({ email: testEmail, password: testPassword }).expect(201);
+      await api().post('/auth/logout').send({ refreshToken: login.body.refreshToken }).expect(204);
+      await api().post('/auth/refresh').send({ refreshToken: login.body.refreshToken }).expect(401);
     });
 
     it('POST /auth/login deve rejeitar senha incorreta', async () => {
