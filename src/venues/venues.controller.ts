@@ -10,6 +10,9 @@ import {
   Query,
   Res,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  HttpCode,
 } from '@nestjs/common';
 
 import { parsePagination, setPaginationHeaders } from '../common/pagination';
@@ -20,6 +23,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { VenuesService } from './venues.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import multer from 'multer';
 
 @Controller('venues')
 export class VenuesController {
@@ -146,6 +151,32 @@ export class VenuesController {
     }, pagination).then((result: any) => { if (result.items) { setPaginationHeaders(response!, pagination, result.total); return result.items; } return result; });
   }
 
+  @Post(':id/image')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
+  @UseInterceptors(FileInterceptor('file', { storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  async uploadMainImage(@Param('id') id: string, @UploadedFile() file: { buffer: Buffer; mimetype: string } | undefined) {
+    if (!file) throw new BadRequestException('Selecione uma imagem para continuar.');
+    try { return await this.venuesService.uploadMainImage(id, file); } catch (error) { if (error instanceof Error && /image|MIME|Invalid/i.test(error.message)) throw new BadRequestException('A imagem deve estar em JPEG, PNG ou WebP.'); throw error; }
+  }
+  @Delete(':id/image')
+  @HttpCode(204)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
+  async deleteMainImage(@Param('id') id: string) { await this.venuesService.deleteMainImage(id); }
+  @Post(':id/images')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
+  @UseInterceptors(FileInterceptor('file', { storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  async addGalleryImage(@Param('id') id: string, @UploadedFile() file: { buffer: Buffer; mimetype: string } | undefined) {
+    if (!file) throw new BadRequestException('Selecione uma imagem para continuar.');
+    try { return await this.venuesService.addGalleryImage(id, file); } catch (error) { if (error instanceof Error && /image|MIME|Invalid/i.test(error.message)) throw new BadRequestException('A imagem deve estar em JPEG, PNG ou WebP.'); throw error; }
+  }
+  @Delete(':id/images/:imageId')
+  @HttpCode(204)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
+  async deleteGalleryImage(@Param('id') id: string, @Param('imageId') imageId: string) { await this.venuesService.deleteGalleryImage(id, imageId); }
   @Get(':id')
   findOne(
     @Param('id')

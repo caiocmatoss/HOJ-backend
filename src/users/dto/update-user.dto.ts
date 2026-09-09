@@ -1,7 +1,6 @@
 import {
   IsOptional,
   IsString,
-  IsUrl,
   MaxLength,
   MinLength,
   Matches,
@@ -40,8 +39,4 @@ export class UpdateUserDto {
   @MaxLength(500)
   bio?: string;
 
-  @IsOptional()
-  @IsString()
-  @IsUrl()
-  avatar?: string;
 }

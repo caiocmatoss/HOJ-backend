@@ -23,6 +23,7 @@ import { PresenceModule } from './presence/presence.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { securityConfig } from './config/security-config';
 import { PublicPrivacyInterceptor } from './common/public-privacy.interceptor';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { PublicPrivacyInterceptor } from './common/public-privacy.interceptor';
     FavoritesModule,
     PresenceModule,
     PrivacyModule,
+    StorageModule,
   ],
 
   controllers: [AppController],

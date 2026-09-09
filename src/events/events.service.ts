@@ -2,16 +2,20 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { normalizeImage, VENUE_IMAGE_MAX_BYTES } from '../storage/image-validator';
+import { StorageService } from '../storage/storage.service';
+import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class EventsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, @Optional() private readonly storage?: StorageService) {}
 
   private readonly venueListSelect = {
     id: true,
@@ -98,6 +102,23 @@ export class EventsService {
     return pagination ? { items, total } : items;
   }
 
+  async uploadImage(id: string, file: { buffer: Buffer; mimetype: string }) {
+    const event = await this.prisma.event.findUnique({ where: { id }, select: { id: true, image: true } });
+    if (!event) throw new NotFoundException('Evento não encontrado.');
+    const body = await normalizeImage(file, VENUE_IMAGE_MAX_BYTES);
+    const upload = await this.storage!.upload({ key: `events/${id}/image/${randomUUID()}.webp`, body, contentType: 'image/webp' });
+    try { await this.prisma.event.update({ where: { id }, data: { image: upload.url } }); }
+    catch (error) { try { await this.storage!.delete(upload.key); } catch { /* best effort cleanup */ } throw error; }
+    try { const key = this.storage!.getKeyFromManagedUrl(event.image); if (key) await this.storage!.delete(key); } catch { /* new image remains valid */ }
+    return this.findOne(id);
+  }
+
+  async deleteImage(id: string): Promise<void> {
+    const event = await this.prisma.event.findUnique({ where: { id }, select: { image: true } });
+    if (!event) throw new NotFoundException('Evento não encontrado.');
+    await this.prisma.event.update({ where: { id }, data: { image: null } });
+    try { const key = this.storage!.getKeyFromManagedUrl(event.image); if (key) await this.storage!.delete(key); } catch { /* database state is authoritative */ }
+  }
   async findOne(id: string) {
     const event = await this.prisma.event.findUnique({
       where: {

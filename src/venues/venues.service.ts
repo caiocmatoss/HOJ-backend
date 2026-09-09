@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,6 +6,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { getOccupancyPercent } from './occupancy-percent';
+import { normalizeImage, VENUE_IMAGE_MAX_BYTES } from '../storage/image-validator';
+import { StorageService } from '../storage/storage.service';
+import { randomUUID } from 'node:crypto';
 
 type VenueListFilters = {
   q?: string;
@@ -58,7 +61,7 @@ type VenueResponse = {
 
 @Injectable()
 export class VenuesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, @Optional() private readonly storage?: StorageService) {}
 
   /**
    * Converte graus para radianos.
@@ -286,6 +289,51 @@ export class VenuesService {
     let serialized = venues.map((venue) => { const distanceKm = geo ? this.calculateDistanceKm(filters.latitude!, filters.longitude!, Number(venue.latitude), Number(venue.longitude)) : null; return { venue: this.serializeVenue(venue, distanceKm, active.get(venue.id) ?? 0), distanceKm }; }).filter((item) => !geo || (item.distanceKm ?? 0) <= radius);
     if (geo) serialized.sort((a,b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0));
     const total = geo ? serialized.length : (pagination ? await this.prisma.venue.count({ where }) : serialized.length); const allItems = serialized.map((item) => item.venue); const items = geo && pagination ? allItems.slice(pagination.skip, pagination.skip + pagination.take) : allItems; return pagination && !filters.cursor ? { items, total } : items;
+  }
+  private async uploadVenueImage(venueId: string, file: { buffer: Buffer; mimetype: string }, prefix: string) {
+    const body = await normalizeImage(file, VENUE_IMAGE_MAX_BYTES);
+    return this.storage!.upload({ key: `venues/${venueId}/${prefix}/${randomUUID()}.webp`, body, contentType: 'image/webp' });
+  }
+
+  async uploadMainImage(id: string, file: { buffer: Buffer; mimetype: string }) {
+    const venue = await this.prisma.venue.findUnique({ where: { id }, select: { image: true } });
+    if (!venue) throw new NotFoundException('Local não encontrado.');
+    const upload = await this.uploadVenueImage(id, file, 'image');
+    try {
+      await this.prisma.venue.update({ where: { id }, data: { image: upload.url } });
+    } catch (error) {
+      try { await this.storage!.delete(upload.key); } catch { /* best effort cleanup */ }
+      throw error;
+    }
+    try { const key = this.storage!.getKeyFromManagedUrl(venue.image); if (key) await this.storage!.delete(key); } catch { /* new image remains valid */ }
+    return this.findOne(id);
+  }
+
+  async deleteMainImage(id: string): Promise<void> {
+    const venue = await this.prisma.venue.findUnique({ where: { id }, select: { image: true } });
+    if (!venue) throw new NotFoundException('Local não encontrado.');
+    await this.prisma.venue.update({ where: { id }, data: { image: null } });
+    try { const key = this.storage!.getKeyFromManagedUrl(venue.image); if (key) await this.storage!.delete(key); } catch { /* database state is authoritative */ }
+  }
+
+  async addGalleryImage(id: string, file: { buffer: Buffer; mimetype: string }) {
+    const venue = await this.prisma.venue.findUnique({ where: { id }, select: { id: true } });
+    if (!venue) throw new NotFoundException('Local não encontrado.');
+    const upload = await this.uploadVenueImage(id, file, 'images');
+    try {
+      const aggregate = await this.prisma.venueImage.aggregate({ where: { venueId: id }, _max: { position: true } });
+      return await this.prisma.venueImage.create({ data: { venueId: id, url: upload.url, position: (aggregate._max.position ?? -1) + 1 }, select: { id: true, venueId: true, url: true, position: true, createdAt: true } });
+    } catch (error) {
+      try { await this.storage!.delete(upload.key); } catch { /* best effort cleanup */ }
+      throw error;
+    }
+  }
+
+  async deleteGalleryImage(venueId: string, imageId: string): Promise<void> {
+    const image = await this.prisma.venueImage.findUnique({ where: { id: imageId }, select: { venueId: true, url: true } });
+    if (!image || image.venueId !== venueId) throw new NotFoundException('Imagem não encontrada.');
+    await this.prisma.venueImage.delete({ where: { id: imageId } });
+    try { const key = this.storage!.getKeyFromManagedUrl(image.url); if (key) await this.storage!.delete(key); } catch { /* database state is authoritative */ }
   }
   async findOne(id: string) {
     const venue = await this.prisma.venue.findUnique({

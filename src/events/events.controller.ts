@@ -10,6 +10,9 @@ import {
   Query,
   Res,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  HttpCode,
 } from '@nestjs/common';
 
 import { parsePagination, setPaginationHeaders } from '../common/pagination';
@@ -20,6 +23,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { EventsService } from './events.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import multer from 'multer';
 
 @Controller('events')
 export class EventsController {
@@ -58,6 +63,20 @@ export class EventsController {
     return this.eventsService.findAll({ venueId, category, isLive: parsedIsLive, q: q?.trim() || undefined, limit: limit ? Number(limit) : undefined, cursor: cursor?.trim() || undefined }, cursor ? undefined : pagination).then((result: any) => { if (result.items) { setPaginationHeaders(response!, pagination, result.total); return result.items; } return result; });
   }
 
+  @Post(':id/image')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
+  @UseInterceptors(FileInterceptor('file', { storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  async uploadImage(@Param('id') id: string, @UploadedFile() file: { buffer: Buffer; mimetype: string } | undefined) {
+    if (!file) throw new BadRequestException('Selecione uma imagem para continuar.');
+    try { return await this.eventsService.uploadImage(id, file); } catch (error) { if (error instanceof Error && /image|MIME|Invalid/i.test(error.message)) throw new BadRequestException('A imagem deve estar em JPEG, PNG ou WebP.'); throw error; }
+  }
+
+  @Delete(':id/image')
+  @HttpCode(204)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("ADMIN")
+  async deleteImage(@Param('id') id: string) { await this.eventsService.deleteImage(id); }
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.eventsService.findOne(id);

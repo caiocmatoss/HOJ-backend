@@ -6,6 +6,7 @@ import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { booleanEnv, corsOrigins } from './config/security-config';
+import { storageConfig } from './config/storage-config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -14,7 +15,7 @@ async function bootstrap() {
   http.use(express.json({ limit: process.env.API_JSON_LIMIT ?? '1mb' }));
   http.use(express.urlencoded({ extended: true, limit: process.env.API_JSON_LIMIT ?? '1mb' }));
   http.use(helmet({ contentSecurityPolicy: false }));
-  http.use('/uploads', express.static(join(process.cwd(), 'uploads')));
+  if (storageConfig().driver === 'local') http.use('/uploads', express.static(join(process.cwd(), storageConfig().localRoot)));
 
   app.enableCors({
     origin: corsOrigins(process.env.CORS_ORIGINS),

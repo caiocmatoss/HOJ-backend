@@ -1,129 +1,17 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
-
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AvatarStorageService } from './avatar-storage.service';
 import type { Pagination, PaginatedResult } from '../common/pagination';
-
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
-
-  private readonly publicUserSelect = {
-    id: true,
-    name: true,
-    username: true,
-    city: true,
-    avatar: true,
-    bio: true,
-    status: true,
-    createdAt: true,
-    updatedAt: true,
-  } as const;
-
-  async findAll(pagination: Pagination): Promise<PaginatedResult<any>> {
-    const where = {};
-    const [users, total] = await Promise.all([
-      this.prisma.user.findMany({ where, select: { ...this.publicUserSelect, lastSeenAt: true }, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.take }),
-      this.prisma.user.count({ where }),
-    ]);
-    const preferences = await this.prisma.privacyPreferences.findMany({ where: { userId: { in: users.map((user) => user.id) } }, select: { userId: true, showStatus: true, showLastSeen: true } });
-    const byUser = new Map(preferences.map((item) => [item.userId, item]));
-    return { items: users.map((user) => { const pref = byUser.get(user.id); return { ...user, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt }; }), total };
-  }
-  async findOne(id: string, viewerId?: string) {
-    const user = await this.prisma.user.findUnique({ where: { id }, select: { ...this.publicUserSelect, lastSeenAt: true } });
-    if (!user) throw new NotFoundException('Usuário não encontrado.');
-    if (viewerId && viewerId !== id) { const privacy = await this.prisma.privacyPreferences.findUnique({ where: { userId: id }, select: { showStatus: true, showLastSeen: true } }); if (privacy?.showStatus === false) user.status = 'OFFLINE'; if (privacy?.showLastSeen === false) user.lastSeenAt = null; }
-    return user;
-  }
-
-  async findMe(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id }, select: { ...this.publicUserSelect, email: true, phone: true, lastSeenAt: true } });
-    if (!user) throw new NotFoundException('Usuário não encontrado.');
-    return user;
-  }
-  async updateMe(id: string, updateUserDto: UpdateUserDto) {
-    const user = await this.prisma.user.findUnique({
-      where: {
-        id,
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    if (!user) {
-      throw new NotFoundException('Usuário não encontrado.');
-    }
-
-    const data: {
-      name?: string;
-      username?: string | null;
-      city?: string | null;
-      phone?: string | null;
-      bio?: string | null;
-      avatar?: string | null;
-    } = {};
-
-    if (updateUserDto.name !== undefined) {
-      data.name = updateUserDto.name.trim();
-    }
-
-    if (updateUserDto.username !== undefined) {
-      const username = (updateUserDto.username ?? '').trim().replace(/^@+/, '').toLowerCase();
-      data.username = username.length > 0 ? username : null;
-    }
-    if (updateUserDto.city !== undefined) {
-      const city = (updateUserDto.city ?? '').trim();
-      if (!city) data.city = null;
-      else {
-        const match = city.match(/^(.+),\s*([A-Za-z]{2})$/);
-        if (!match) throw new BadRequestException('Informe a cidade e a UF, por exemplo: Carapicuíba, SP.');
-        data.city = `${match[1].trim()}, ${match[2].toUpperCase()}`;
-      }
-    }
-    if (updateUserDto.phone !== undefined) {
-      const raw = (updateUserDto.phone ?? '').trim();
-      if (!raw) {
-        data.phone = null;
-      } else {
-        const normalized = `${raw.startsWith('+') ? '+' : ''}${raw.replace(/\D/g, '')}`;
-        const digitCount = normalized.replace('+', '').length;
-        if (digitCount < 8 || digitCount > 20) throw new BadRequestException('Digite um telefone válido.');
-        data.phone = normalized;
-      }
-    }
-
-    if (updateUserDto.bio !== undefined) {
-      const bio = (updateUserDto.bio ?? '').trim();
-
-      data.bio = bio.length > 0 ? bio : null;
-    }
-
-    if (updateUserDto.avatar !== undefined) {
-      data.avatar = (updateUserDto.avatar ?? '').trim() || null;
-    }
-
-    try {
-      return await this.prisma.user.update({ where: { id }, data, select: this.publicUserSelect });
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('Este nome de usuário já está em uso.');
-      }
-      throw error;
-    }
-  }
-
-  async updateAvatar(id: string, reference: string, storage: AvatarStorageService) {
-    const current = await this.prisma.user.findUnique({ where: { id }, select: { avatar: true } });
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: { avatar: reference },
-      select: { ...this.publicUserSelect, lastSeenAt: true },
-    });
-    await storage.removeIfLocal(current?.avatar);
-    return updated;
-  }
+  private readonly publicUserSelect = { id: true, name: true, username: true, city: true, avatar: true, bio: true, status: true, createdAt: true, updatedAt: true } as const;
+  async findAll(pagination: Pagination): Promise<PaginatedResult<any>> { const where = {}; const [users,total]=await Promise.all([this.prisma.user.findMany({where,select:{...this.publicUserSelect,lastSeenAt:true},orderBy:{createdAt:'desc'},skip:pagination.skip,take:pagination.take}),this.prisma.user.count({where})]); const preferences=await this.prisma.privacyPreferences.findMany({where:{userId:{in:users.map(u=>u.id)}},select:{userId:true,showStatus:true,showLastSeen:true}}); const byUser=new Map(preferences.map(p=>[p.userId,p])); return {items:users.map(user=>{const p=byUser.get(user.id); return {...user,status:p?.showStatus===false?'OFFLINE':user.status,lastSeenAt:p?.showLastSeen===false?null:user.lastSeenAt};}),total}; }
+  async findOne(id:string,viewerId?:string){const user=await this.prisma.user.findUnique({where:{id},select:{...this.publicUserSelect,lastSeenAt:true}}); if(!user)throw new NotFoundException('Usuário não encontrado.'); if(viewerId&&viewerId!==id){const p=await this.prisma.privacyPreferences.findUnique({where:{userId:id},select:{showStatus:true,showLastSeen:true}}); if(p?.showStatus===false)user.status='OFFLINE'; if(p?.showLastSeen===false)user.lastSeenAt=null;} return user;}
+  async findMe(id:string){const user=await this.prisma.user.findUnique({where:{id},select:{...this.publicUserSelect,email:true,phone:true,lastSeenAt:true}});if(!user)throw new NotFoundException('Usuário não encontrado.');return user;}
+  async updateMe(id:string,dto:UpdateUserDto){const user=await this.prisma.user.findUnique({where:{id},select:{id:true}});if(!user)throw new NotFoundException('Usuário não encontrado.');const data:{name?:string;username?:string|null;city?:string|null;phone?:string|null;bio?:string|null}={};if(dto.name!==undefined)data.name=dto.name.trim();if(dto.username!==undefined){const u=(dto.username??'').trim().replace(/^@+/,'').toLowerCase();data.username=u.length?u:null;}if(dto.city!==undefined){const c=(dto.city??'').trim();if(!c)data.city=null;else{const m=c.match(/^(.+),\s*([A-Za-z]{2})$/);if(!m)throw new BadRequestException('Informe a cidade e a UF.');data.city=`${m[1].trim()}, ${m[2].toUpperCase()}`;}}if(dto.phone!==undefined){const raw=(dto.phone??'').trim();if(!raw)data.phone=null;else{const normalized=`${raw.startsWith('+')?'+':''}${raw.replace(/\D/g,'')}`;const count=normalized.replace('+','').length;if(count<8||count>20)throw new BadRequestException('Digite um telefone válido.');data.phone=normalized;}}if(dto.bio!==undefined){const b=(dto.bio??'').trim();data.bio=b.length?b:null;}try{return await this.prisma.user.update({where:{id},data,select:this.publicUserSelect});}catch(error){if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')throw new ConflictException('Este nome de usuário já está em uso.');throw error;}}
+  async updateAvatar(id:string,reference:string,storage:AvatarStorageService){const current=await this.prisma.user.findUnique({where:{id},select:{avatar:true}});try{const updated=await this.prisma.user.update({where:{id},data:{avatar:reference},select:{...this.publicUserSelect,lastSeenAt:true}});try{await storage.deleteManaged(current?.avatar);}catch{/* new reference remains valid */}return updated;}catch(error){try{await storage.deleteManaged(reference);}catch{/* best effort orphan cleanup */}throw error;}}
+  async deleteAvatar(id:string,storage:AvatarStorageService):Promise<void>{const current=await this.prisma.user.findUnique({where:{id},select:{avatar:true}});if(!current)throw new NotFoundException('Usuário não encontrado.');await this.prisma.user.update({where:{id},data:{avatar:null}});try{await storage.deleteManaged(current.avatar);}catch{/* database state is authoritative */}}
 }
