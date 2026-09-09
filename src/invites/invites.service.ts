@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateInviteDto } from './dto/create-invite.dto';
+import type { Pagination } from '../common/pagination';
 
 @Injectable()
 export class InvitesService {
@@ -105,7 +106,6 @@ export class InvitesService {
           select: {
             id: true,
             name: true,
-            email: true,
             avatar: true,
             status: true,
           },
@@ -114,7 +114,6 @@ export class InvitesService {
           select: {
             id: true,
             name: true,
-            email: true,
             avatar: true,
             status: true,
           },
@@ -131,83 +130,31 @@ export class InvitesService {
     return invite;
   }
 
-  async findReceived(userId: string) {
-    return this.prisma.invite.findMany({
-      where: {
-        receiverId: userId,
-        status: 'PENDING',
-      },
-      include: {
-        group: {
-          select: {
-            id: true,
-            name: true,
-            venueId: true,
-          },
-        },
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            status: true,
-          },
-        },
-        receiver: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            status: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async findReceived(userId: string, pagination: Pagination) {
+    const where = { receiverId: userId, status: 'PENDING' as const };
+    const [items, total] = await Promise.all([
+      this.prisma.invite.findMany({ where, skip: pagination.skip, take: pagination.take, include: {
+        group: { select: { id: true, name: true, venueId: true } },
+        sender: { select: { id: true, name: true, avatar: true, status: true } },
+        receiver: { select: { id: true, name: true, avatar: true, status: true } },
+      }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
+      this.prisma.invite.count({ where }),
+    ]);
+    return { items, total };
   }
 
-  async findSent(userId: string) {
-    return this.prisma.invite.findMany({
-      where: {
-        senderId: userId,
-      },
-      include: {
-        group: {
-          select: {
-            id: true,
-            name: true,
-            venueId: true,
-          },
-        },
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            status: true,
-          },
-        },
-        receiver: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            status: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async findSent(userId: string, pagination: Pagination) {
+    const where = { senderId: userId };
+    const [items, total] = await Promise.all([
+      this.prisma.invite.findMany({ where, skip: pagination.skip, take: pagination.take, include: {
+        group: { select: { id: true, name: true, venueId: true } },
+        sender: { select: { id: true, name: true, avatar: true, status: true } },
+        receiver: { select: { id: true, name: true, avatar: true, status: true } },
+      }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
+      this.prisma.invite.count({ where }),
+    ]);
+    return { items, total };
   }
-
   async accept(userId: string, inviteId: string) {
     const invite = await this.prisma.invite.findUnique({
       where: {
@@ -225,7 +172,6 @@ export class InvitesService {
           select: {
             id: true,
             name: true,
-            email: true,
             avatar: true,
             status: true,
           },
@@ -234,7 +180,6 @@ export class InvitesService {
           select: {
             id: true,
             name: true,
-            email: true,
             avatar: true,
             status: true,
           },
@@ -288,7 +233,6 @@ export class InvitesService {
             select: {
               id: true,
               name: true,
-              email: true,
               avatar: true,
               bio: true,
               status: true,
@@ -329,14 +273,12 @@ export class InvitesService {
           select: {
             id: true,
             name: true,
-            email: true,
           },
         },
         receiver: {
           select: {
             id: true,
             name: true,
-            email: true,
           },
         },
       },
@@ -374,7 +316,6 @@ export class InvitesService {
           select: {
             id: true,
             name: true,
-            email: true,
             avatar: true,
             status: true,
           },
@@ -383,7 +324,6 @@ export class InvitesService {
           select: {
             id: true,
             name: true,
-            email: true,
             avatar: true,
             status: true,
           },

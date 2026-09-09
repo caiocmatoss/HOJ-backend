@@ -1,0 +1,14 @@
+import { INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
+
+describe('Friends pagination (e2e)', () => {
+  let app: INestApplication; let prisma: PrismaService; let token: string; let userIds: string[] = [];
+  beforeAll(async () => { const module = await Test.createTestingModule({ imports: [AppModule] }).compile(); app = module.createNestApplication(); await app.init(); prisma = app.get(PrismaService); const stamp = Date.now(); for (let i=0;i<4;i++){ const r=await request(app.getHttpServer()).post('/auth/register').send({name:`Pagination Friend ${i}`,email:`pagination-friend-${stamp}-${i}@teste.com`,password:'Teste@123456'}); userIds.push(r.body.user.id); if(i===0) token=r.body.accessToken; } await prisma.friendship.createMany({data:[1,2,3].map(i=>({requesterId:userIds[0],addresseeId:userIds[i],status:'ACCEPTED'}))}); });
+  afterAll(async()=>{ await prisma.friendship.deleteMany({where:{requesterId:{in:userIds}}}); await prisma.user.deleteMany({where:{id:{in:userIds}}}); await app.close(); });
+  it('returns paginated friends with real total and privacy-safe users', async()=>{ const one=await request(app.getHttpServer()).get('/friends?page=1&limit=2').set('Authorization',`Bearer ${token}`).expect(200); expect(one.body).toHaveLength(2); expect(one.headers['x-total-count']).toBe('3'); expect(one.headers['x-total-pages']).toBe('2'); for(const u of one.body) { expect(u.email).toBeUndefined(); expect(u.phone).toBeUndefined(); } const two=await request(app.getHttpServer()).get('/friends?page=2&limit=2').set('Authorization',`Bearer ${token}`).expect(200); expect(two.body).toHaveLength(1); expect(new Set(one.body.map((u:any)=>u.id)).size).toBe(2); expect(one.body.some((u:any)=>two.body.some((v:any)=>v.id===u.id))).toBe(false); });
+  it('validates pagination and preserves total beyond range', async()=>{ await request(app.getHttpServer()).get('/friends?page=0').set('Authorization',`Bearer ${token}`).expect(400); const end=await request(app.getHttpServer()).get('/friends?page=10&limit=2').set('Authorization',`Bearer ${token}`).expect(200); expect(end.body).toEqual([]); expect(end.headers['x-total-count']).toBe('3'); });
+  it('paginates incoming requests with real total', async()=>{ await prisma.friendship.createMany({data:[1,2,3].map(i=>({requesterId:userIds[i],addresseeId:userIds[0],status:'PENDING'}))}); const r=await request(app.getHttpServer()).get('/friends/requests?page=1&limit=2').set('Authorization', 'Bearer ' + token).expect(200); expect(r.body).toHaveLength(2); expect(r.headers['x-total-count']).toBe('3'); expect(r.headers['x-total-pages']).toBe('2'); for(const x of r.body){ expect(x.requester.email).toBeUndefined(); expect(x.requester.phone).toBeUndefined(); } });
+});

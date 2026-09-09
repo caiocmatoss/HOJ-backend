@@ -14,7 +14,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { Server, Socket } from 'socket.io';
 
 import { FriendsService } from '../friends/friends.service';
-import type { SocketData } from '../auth/socket/socket.types';
+import type { AppSocket, SocketData } from '../auth/socket/socket.types';
 import { PrismaService } from '../prisma/prisma.service';
 
 import { LocationsService } from './locations.service';
@@ -71,11 +71,11 @@ export class LocationsGateway implements OnGatewayInit {
   ) {}
 
   afterInit(server: Server): void {
-    console.log('');
-    console.log('==========================================');
-    console.log('   LOCATIONS GATEWAY INICIALIZADO');
-    console.log('   LOCATION REALTIME ATIVO');
-    console.log('==========================================');
+    void 0;
+    void 0;
+    void 0;
+    void 0;
+    void 0;
 
 
 server.use((socket: Socket, next) => {
@@ -83,135 +83,26 @@ server.use((socket: Socket, next) => {
     });
 
     server.on('connection', (socket: Socket) => {
-      console.log('[Locations] socket conectado:', socket.id);
+      void 0;
     });
   }
 
-  private async authenticateSocket(
-    socket: LocationSocket,
-    next: (err?: Error) => void,
-  ): Promise<void> {
-    console.log('');
-    console.log('==========================================');
-    console.log('   NOVA CONEXÃO LOCATION SOCKET.IO');
-    console.log('==========================================');
-
-    console.log(`Socket ID inicial: ${socket.id}`);
-
+  private async authenticateSocket(socket: any, next: (err?: Error) => void): Promise<void> {
     try {
       const auth = socket.handshake.auth as Record<string, unknown> | undefined;
-
-      console.log('Socket authentication attempted:', auth ? 'SIM' : 'NÃO');
-
       const authToken = auth?.token;
-
-      console.log(
-        `Socket authentication attempted: ${typeof authToken === 'string' ? 'SIM' : 'NÃO'}`,
-      );
-
-      if (typeof authToken !== 'string' || !authToken.trim()) {
-        console.error('[Locations] ERRO: token não foi enviado pelo cliente.');
-
-        next(new Error('Token não enviado.'));
-
-        return;
-      }
-
-      const token = authToken.startsWith('Bearer ')
-        ? authToken.substring(7).trim()
-        : authToken.trim();
-
-      console.log(
-        `[Locations] JWT após tratamento: ${token.length} caracteres`,
-      );
-
-      let payload: JwtPayload;
-
-      try {
-        payload = await this.jwtService.verifyAsync<JwtPayload>(token);
-
-        console.log('[Locations] JWT VALIDADO COM SUCESSO.');
-        console.log('[Locations] JWT validado.');
-        console.log('[Locations] JWT validado.');
-      } catch (error: unknown) {
-        console.error('');
-        console.error('========== ERRO AO VALIDAR JWT ==========');
-
-        if (error instanceof Error) {
-          console.error(`Socket error. ${error.name}`);
-          console.error(`Mensagem: ${error.message}`);
-        } else {
-          console.error('Socket operation failed.');
-        }
-
-        console.error('==========================================');
-
-        next(new Error('JWT inválido.'));
-
-        return;
-      }
-
-      if (typeof payload.sub !== 'string' || !payload.sub.trim()) {
-        next(new Error('JWT inválido.'));
-
-        return;
-      }
-
-      const user = await this.prisma.user.findUnique({
-        where: {
-          id: payload.sub,
-        },
-
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          avatar: true,
-          bio: true,
-          status: true,
-        },
-      });
-
-      if (!user) {
-        console.error('[Locations] ERRO: usuário do JWT não encontrado.');
-
-        console.error(`[Locations] User ID: ${payload.sub}`);
-
-        next(new Error('Usuário não encontrado.'));
-
-        return;
-      }
-
+      if (typeof authToken !== 'string' || !authToken.trim()) return next(new Error('Token não enviado.'));
+      const token = authToken.startsWith('Bearer ') ? authToken.substring(7).trim() : authToken.trim();
+      const payload = await this.jwtService.verifyAsync<JwtPayload>(token);
+      if (typeof payload.sub !== 'string' || !payload.sub.trim()) return next(new Error('Token inválido.'));
+      const user = await this.prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, name: true, avatar: true, bio: true, status: true } });
+      if (!user) return next(new Error('Usuário não encontrado.'));
       socket.data.user = user;
-      socket.data.presenceRegistered = false;
-
-      console.log('');
-      console.log('[Locations] USUÁRIO SOCKET AUTENTICADO:');
-      console.log(`[Locations] ID: ${user.id}`);
-      console.log(`[Locations] Socket error. ${user.name}`);
-      console.log('[Locations] Socket user authenticated.');
-      console.log('[Locations] Socket autorizado com sucesso.');
-      console.log('==========================================');
-
       next();
-    } catch (error: unknown) {
-      console.error('');
-      console.error('========== ERRO LOCATION SOCKET.IO ==========');
-
-      if (error instanceof Error) {
-        console.error(`Socket error. ${error.name}`);
-        console.error(`Mensagem: ${error.message}`);
-        console.error('Socket operation failed.');
-      } else {
-        console.error('Socket operation failed.');
-      }
-
-      console.error('=============================================');
-
-      next(new Error('Erro de autenticação Socket.IO.'));
+    } catch {
+      next(new Error('Não autorizado.'));
     }
   }
-
   @SubscribeMessage('location:join')
   async handleJoin(
     @ConnectedSocket() client: LocationSocket,
@@ -241,7 +132,7 @@ server.use((socket: Socket, next) => {
         },
       });
     } catch (error: unknown) {
-      console.error('[Locations] erro ao entrar na sala:', error);
+      console.error('[locations.gateway] Operation failed.');;
 
       ack({
         event: 'error',
@@ -282,7 +173,7 @@ server.use((socket: Socket, next) => {
         },
       });
     } catch (error: unknown) {
-      console.error('[Locations] erro ao sair da sala:', error);
+      console.error('[locations.gateway] Operation failed.');;
 
       ack({
         event: 'error',
@@ -398,7 +289,7 @@ server.use((socket: Socket, next) => {
         },
       });
     } catch (error: unknown) {
-      console.error('[Locations] erro ao atualizar localização:', error);
+      console.error('[locations.gateway] Operation failed.');;
 
       ack({
         event: 'error',

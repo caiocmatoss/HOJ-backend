@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import type { Pagination } from '../common/pagination';
 
 import { AddGroupMemberDto } from './dto/add-group-member.dto';
 import { CreateGroupDto } from './dto/create-group.dto';
@@ -44,8 +45,7 @@ export class GroupsService {
           select: {
             id: true,
             name: true,
-            email: true,
-            avatar: true,
+                        avatar: true,
             status: true,
           },
         },
@@ -56,8 +56,7 @@ export class GroupsService {
               select: {
                 id: true,
                 name: true,
-                email: true,
-                avatar: true,
+                                avatar: true,
                 status: true,
               },
             },
@@ -67,50 +66,15 @@ export class GroupsService {
     });
   }
 
-  async findAll(userId: string) {
-    return this.prisma.group.findMany({
-      where: {
-        members: {
-          some: {
-            userId,
-          },
-        },
-      },
-
-      include: {
-        venue: true,
-
-        creator: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            status: true,
-          },
-        },
-
-        members: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                avatar: true,
-                status: true,
-              },
-            },
-          },
-        },
-      },
-
-      orderBy: {
-        updatedAt: 'desc',
-      },
-    });
+  async findAll(userId: string, pagination: import('../common/pagination').Pagination) {
+    const where = { members: { some: { userId } } };
+    const [items, total] = await Promise.all([
+      this.prisma.group.findMany({ where, skip: pagination.skip, take: pagination.take, include: { venue: true, creator: { select: { id: true, name: true, avatar: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } }, members: { include: { user: { select: { id: true, name: true, avatar: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } } } } }, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }] }),
+      this.prisma.group.count({ where }),
+    ]);
+    const sanitize = (user: any) => { const pref = user.privacyPreferences; const { privacyPreferences, ...rest } = user; return { ...rest, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt }; };
+    return { items: items.map((group: any) => ({ ...group, creator: sanitize(group.creator), members: group.members.map((member: any) => ({ ...member, user: sanitize(member.user) })) })), total };
   }
-
   async findOne(userId: string, groupId: string) {
     const group = await this.prisma.group.findFirst({
       where: {
@@ -130,8 +94,7 @@ export class GroupsService {
           select: {
             id: true,
             name: true,
-            email: true,
-            avatar: true,
+                        avatar: true,
             status: true,
           },
         },
@@ -142,8 +105,7 @@ export class GroupsService {
               select: {
                 id: true,
                 name: true,
-                email: true,
-                avatar: true,
+                                avatar: true,
                 status: true,
               },
             },
@@ -214,8 +176,7 @@ export class GroupsService {
           select: {
             id: true,
             name: true,
-            email: true,
-            avatar: true,
+                        avatar: true,
             bio: true,
             status: true,
           },
@@ -224,47 +185,16 @@ export class GroupsService {
     });
   }
 
-  async findMembers(requesterId: string, groupId: string) {
-    const group = await this.prisma.group.findFirst({
-      where: {
-        id: groupId,
-
-        members: {
-          some: {
-            userId: requesterId,
-          },
-        },
-      },
-    });
-
-    if (!group) {
-      throw new NotFoundException('Grupo não encontrado ou você não é membro.');
-    }
-
-    return this.prisma.groupMember.findMany({
-      where: {
-        groupId,
-      },
-
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            bio: true,
-            status: true,
-          },
-        },
-      },
-
-      orderBy: {
-        joinedAt: 'asc',
-      },
-    });
+  async findMembers(requesterId: string, groupId: string, pagination: import('../common/pagination').Pagination) {
+    const group = await this.prisma.group.findFirst({ where: { id: groupId, members: { some: { userId: requesterId } } } });
+    if (!group) throw new NotFoundException('Grupo não encontrado ou você não é membro.');
+    const where = { groupId };
+    const [items, total] = await Promise.all([
+      this.prisma.groupMember.findMany({ where, skip: pagination.skip, take: pagination.take, include: { user: { select: { id: true, name: true, avatar: true, bio: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } } }, orderBy: [{ joinedAt: 'asc' }, { id: 'asc' }] }),
+      this.prisma.groupMember.count({ where }),
+    ]);
+    return { items: items.map((member: any) => { const pref = member.user.privacyPreferences; const { privacyPreferences, ...user } = member.user; return { ...member, user: { ...user, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt } }; }), total };
   }
-
   async removeMember(requesterId: string, groupId: string, userId: string) {
     const group = await this.prisma.group.findUnique({
       where: {

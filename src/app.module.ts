@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
@@ -22,6 +22,7 @@ import { FavoritesModule } from './favorites/favorites.module';
 import { PresenceModule } from './presence/presence.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { securityConfig } from './config/security-config';
+import { PublicPrivacyInterceptor } from './common/public-privacy.interceptor';
 
 @Module({
   imports: [
@@ -46,7 +47,7 @@ import { securityConfig } from './config/security-config';
 
   controllers: [AppController],
 
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }, { provide: APP_INTERCEPTOR, useClass: PublicPrivacyInterceptor }],
 })
 export class AppModule {}
 

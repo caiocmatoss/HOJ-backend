@@ -3,17 +3,21 @@ import {
   BadRequestException,
   Controller,
   Get,
+  Query,
+  Res,
   Param,
   Patch,
   Post,
   Req,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFile
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
+
+import { parsePagination, setPaginationHeaders } from '../common/pagination';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -41,10 +45,7 @@ export class UsersController {
 
   @Get()
   @UseGuards(JwtAuthGuard)
-  findAll() {
-    return this.usersService.findAll();
-  }
-
+  findAll(@Query('page') page: string | undefined, @Query('limit') limit: string | undefined, @Res({ passthrough: true }) response: Response) { const pagination = parsePagination(page, limit); return this.usersService.findAll(pagination).then(({ items, total }) => { setPaginationHeaders(response, pagination, total); return items; }); }
   @Get('me')
   @UseGuards(JwtAuthGuard)
   findMe(
@@ -90,7 +91,7 @@ export class UsersController {
 
   @Get(':id')
   @UseGuards(JwtAuthGuard)
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
+  findOne(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.usersService.findOne(id, request.user.id);
   }
 }

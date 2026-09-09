@@ -313,7 +313,8 @@ describe('Friends (e2e)', () => {
 
     expect(friend).toBeDefined();
     expect(friend?.name).toBe('Friends User B');
-    expect(friend?.email).toBe(userB.user.email);
+    expect(friend?.email).toBeUndefined();
+    expect(friend?.phone).toBeUndefined();
   });
 
   it('deve listar a amizade para o segundo usuário', async () => {

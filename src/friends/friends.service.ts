@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import type { Pagination } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -142,55 +143,15 @@ export class FriendsService {
     return friendship;
   }
 
-  async getFriends(userId: string) {
-    const friendships = await this.prisma.friendship.findMany({
-      where: {
-        status: 'ACCEPTED',
-        OR: [
-          {
-            requesterId: userId,
-          },
-          {
-            addresseeId: userId,
-          },
-        ],
-      },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            bio: true,
-            status: true,
-            privacyPreferences: { select: { showStatus: true } },
-          },
-        },
-        addressee: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            bio: true,
-            status: true,
-            privacyPreferences: { select: { showStatus: true } },
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    return friendships.map((friendship) => {
-      const friend = friendship.requesterId === userId ? friendship.addressee : friendship.requester;
-      const { privacyPreferences, ...publicFriend } = friend;
-      return { ...publicFriend, status: privacyPreferences?.showStatus === false ? 'OFFLINE' : friend.status };
-    });
+  async getFriends(userId: string, pagination: Pagination) {
+    const where = { status: 'ACCEPTED' as const, OR: [{ requesterId: userId }, { addresseeId: userId }] };
+    const [friendships, total] = await Promise.all([
+      this.prisma.friendship.findMany({ where, skip: pagination.skip, take: pagination.take, include: { requester: { select: { id: true, name: true, avatar: true, bio: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } }, addressee: { select: { id: true, name: true, avatar: true, bio: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
+      this.prisma.friendship.count({ where }),
+    ]);
+    const items = friendships.map((friendship) => { const friend: any = friendship.requesterId === userId ? friendship.addressee : friendship.requester; const pref = friend.privacyPreferences; const { privacyPreferences, ...publicFriend } = friend; return { ...publicFriend, status: pref?.showStatus === false ? 'OFFLINE' : friend.status, lastSeenAt: pref?.showLastSeen === false ? null : friend.lastSeenAt }; });
+    return { items, total };
   }
-
   async getNearbyFriends(userId: string, radiusKm = 10) {
     if (!Number.isFinite(radiusKm) || radiusKm <= 0) {
       throw new BadRequestException(
@@ -317,40 +278,12 @@ export class FriendsService {
     };
   }
 
-  async getRequests(userId: string) {
-    return this.prisma.friendship.findMany({
-      where: {
-        addresseeId: userId,
-        status: 'PENDING',
-      },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            bio: true,
-            status: true,
-          },
-        },
-        addressee: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            bio: true,
-            status: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async getRequests(userId: string, pagination: Pagination) {
+    const where = { addresseeId: userId, status: 'PENDING' as const };
+    const [requests, total] = await Promise.all([this.prisma.friendship.findMany({ where, skip: pagination.skip, take: pagination.take, include: { requester: { select: { id: true, name: true, avatar: true, bio: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } }, addressee: { select: { id: true, name: true, avatar: true, bio: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }), this.prisma.friendship.count({ where })]);
+    const items = requests.map((item: any) => { const requester = item.requester; const addressee = item.addressee; const clean: any = { ...item, requester: { ...requester, status: requester.privacyPreferences?.showStatus === false ? 'OFFLINE' : requester.status, lastSeenAt: requester.privacyPreferences?.showLastSeen === false ? null : requester.lastSeenAt }, addressee: { ...addressee } }; delete clean.requester.privacyPreferences; delete clean.addressee.privacyPreferences; return clean; });
+    return { items, total };
   }
-
   async acceptRequest(userId: string, friendshipId: string) {
     const friendship = await this.prisma.friendship.findUnique({
       where: {

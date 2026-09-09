@@ -90,54 +90,12 @@ export class EventsService {
     });
   }
 
-  async findAll(filters?: {
-    venueId?: string;
-    category?: string;
-    isLive?: boolean;
-    q?: string;
-    limit?: number;
-    cursor?: string;
-  }) {
-    return this.prisma.event.findMany({
-      where: {
-        ...(filters?.q ? { title: { contains: filters.q, mode: "insensitive" } } : {}),
-        ...(filters?.venueId
-          ? {
-              venueId: filters.venueId,
-            }
-          : {}),
-
-        ...(filters?.category
-          ? {
-              category: filters.category,
-            }
-          : {}),
-
-        ...(filters?.isLive !== undefined
-          ? {
-              isLive: filters.isLive,
-            }
-          : {}),
-      },
-
-      take: filters?.limit ? Math.min(Math.max(filters.limit, 1), 100) : undefined,
-      ...(filters?.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}),
-
-      include: {
-        venue: {
-          select: this.venueListSelect,
-        },
-      },
-
-      orderBy: [
-        {
-          date: 'asc',
-        },
-        {
-          time: 'asc',
-        },
-      ],
-    });
+  async findAll(filters: { venueId?: string; category?: string; isLive?: boolean; q?: string; limit?: number; cursor?: string } = {}, pagination?: import('../common/pagination').Pagination): Promise<any> {
+    const where: any = { ...(filters.q ? { title: { contains: filters.q, mode: 'insensitive' } } : {}), ...(filters.venueId ? { venueId: filters.venueId } : {}), ...(filters.category ? { category: filters.category } : {}), ...(filters.isLive !== undefined ? { isLive: filters.isLive } : {}) };
+    const orderBy = [{ date: 'asc' }, { time: 'asc' }, { id: 'asc' }] as any;
+    if (filters.cursor) return this.prisma.event.findMany({ where, take: filters.limit ? Math.min(Math.max(filters.limit, 1), 100) : undefined, cursor: { id: filters.cursor }, skip: 1, include: { venue: { select: this.venueListSelect } }, orderBy });
+    const items = await this.prisma.event.findMany({ where, ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}), include: { venue: { select: this.venueListSelect } }, orderBy }); const total = pagination ? await this.prisma.event.count({ where }) : items.length;
+    return pagination ? { items, total } : items;
   }
 
   async findOne(id: string) {

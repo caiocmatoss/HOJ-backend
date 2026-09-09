@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Req, UseGuards, Query, Res } from '@nestjs/common';
 
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
+import { parsePagination, setPaginationHeaders } from '../common/pagination';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -24,8 +25,7 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Get()
-  findAll(@Req() request: AuthenticatedRequest) {
-    return this.notificationsService.findAll(request.user.id);
+  findAll(@Req() request: AuthenticatedRequest, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) { const pagination = parsePagination(page, limit); return this.notificationsService.findAll(request.user.id, pagination).then((result: any) => { setPaginationHeaders(response!, pagination, result.total); return result.items; });
   }
 
   @Get('preferences')
@@ -39,8 +39,7 @@ export class NotificationsController {
   }
 
   @Get('unread')
-  findUnread(@Req() request: AuthenticatedRequest) {
-    return this.notificationsService.findUnread(request.user.id);
+  findUnread(@Req() request: AuthenticatedRequest, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) { const pagination = parsePagination(page, limit); return this.notificationsService.findUnread(request.user.id, pagination).then((result: any) => { setPaginationHeaders(response!, pagination, result.total); return result.items; });
   }
 
   @Get('unread/count')

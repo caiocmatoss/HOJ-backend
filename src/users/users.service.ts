@@ -4,6 +4,7 @@ import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AvatarStorageService } from './avatar-storage.service';
+import type { Pagination, PaginatedResult } from '../common/pagination';
 
 @Injectable()
 export class UsersService {
@@ -12,10 +13,8 @@ export class UsersService {
   private readonly publicUserSelect = {
     id: true,
     name: true,
-    email: true,
     username: true,
     city: true,
-    phone: true,
     avatar: true,
     bio: true,
     status: true,
@@ -23,34 +22,28 @@ export class UsersService {
     updatedAt: true,
   } as const;
 
-  async findAll() {
-    return this.prisma.user.findMany({
-      select: this.publicUserSelect,
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async findAll(pagination: Pagination): Promise<PaginatedResult<any>> {
+    const where = {};
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({ where, select: { ...this.publicUserSelect, lastSeenAt: true }, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.take }),
+      this.prisma.user.count({ where }),
+    ]);
+    const preferences = await this.prisma.privacyPreferences.findMany({ where: { userId: { in: users.map((user) => user.id) } }, select: { userId: true, showStatus: true, showLastSeen: true } });
+    const byUser = new Map(preferences.map((item) => [item.userId, item]));
+    return { items: users.map((user) => { const pref = byUser.get(user.id); return { ...user, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt }; }), total };
   }
-
-  async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: {
-        id,
-      },
-      select: this.publicUserSelect,
-    });
-
-    if (!user) {
-      throw new NotFoundException('Usuário não encontrado.');
-    }
-
+  async findOne(id: string, viewerId?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { ...this.publicUserSelect, lastSeenAt: true } });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+    if (viewerId && viewerId !== id) { const privacy = await this.prisma.privacyPreferences.findUnique({ where: { userId: id }, select: { showStatus: true, showLastSeen: true } }); if (privacy?.showStatus === false) user.status = 'OFFLINE'; if (privacy?.showLastSeen === false) user.lastSeenAt = null; }
     return user;
   }
 
   async findMe(id: string) {
-    return this.findOne(id);
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { ...this.publicUserSelect, email: true, phone: true, lastSeenAt: true } });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+    return user;
   }
-
   async updateMe(id: string, updateUserDto: UpdateUserDto) {
     const user = await this.prisma.user.findUnique({
       where: {
@@ -128,7 +121,7 @@ export class UsersService {
     const updated = await this.prisma.user.update({
       where: { id },
       data: { avatar: reference },
-      select: this.publicUserSelect,
+      select: { ...this.publicUserSelect, lastSeenAt: true },
     });
     await storage.removeIfLocal(current?.avatar);
     return updated;

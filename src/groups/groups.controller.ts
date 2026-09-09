@@ -6,10 +6,13 @@ import {
   Param,
   Post,
   Req,
+  Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
+import { parsePagination, setPaginationHeaders } from '../common/pagination';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -39,9 +42,7 @@ export class GroupsController {
   }
 
   @Get()
-  findAll(@Req() request: AuthenticatedRequest) {
-    return this.groupsService.findAll(request.user.id);
-  }
+  async findAll(@Req() request: AuthenticatedRequest, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) { const p = parsePagination(page, limit); const result = await this.groupsService.findAll(request.user.id, p); setPaginationHeaders(response!, p, result.total); return result.items; }
 
   @Get(':id')
   findOne(@Req() request: AuthenticatedRequest, @Param('id') groupId: string) {
@@ -58,12 +59,7 @@ export class GroupsController {
   }
 
   @Get(':id/members')
-  findMembers(
-    @Req() request: AuthenticatedRequest,
-    @Param('id') groupId: string,
-  ) {
-    return this.groupsService.findMembers(request.user.id, groupId);
-  }
+  async findMembers(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) { const p = parsePagination(page, limit); const result = await this.groupsService.findMembers(request.user.id, groupId, p); setPaginationHeaders(response!, p, result.total); return result.items; }
 
   @Delete(':id')
   remove(

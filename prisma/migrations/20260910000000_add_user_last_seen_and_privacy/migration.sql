@@ -1,0 +1,2 @@
+ALTER TABLE "User" ADD COLUMN "lastSeenAt" TIMESTAMP(3);
+ALTER TABLE "PrivacyPreferences" ADD COLUMN "showLastSeen" BOOLEAN NOT NULL DEFAULT true;

@@ -8,9 +8,11 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 
+import { parsePagination, setPaginationHeaders } from '../common/pagination';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -54,12 +56,14 @@ export class VenuesController {
     @Query('longitude')
     longitude?: string,
 
+    @Query('page') page?: string,
     @Query('limit') limit?: string,
 
     @Query('cursor') cursor?: string,
 
     @Query('radius')
     radius?: string,
+    @Res({ passthrough: true }) response?: import('express').Response,
   ) {
     let parsedLatitude: number | undefined;
 
@@ -120,6 +124,8 @@ export class VenuesController {
       parsedStatus = normalizedStatus;
     }
 
+    if (cursor && page !== undefined) throw new BadRequestException('cursor e page não podem ser combinados.');
+    const pagination = parsePagination(page, limit);
     return this.venuesService.findAll({
       q: q?.trim() || undefined,
       category: category?.trim() || undefined,
@@ -137,7 +143,7 @@ export class VenuesController {
       longitude: parsedLongitude,
 
       radius: parsedRadius,
-    });
+    }, pagination).then((result: any) => { if (result.items) { setPaginationHeaders(response!, pagination, result.total); return result.items; } return result; });
   }
 
   @Get(':id')

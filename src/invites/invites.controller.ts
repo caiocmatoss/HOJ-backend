@@ -1,31 +1,11 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Patch,
-  Post,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
-
-import type { Request } from 'express';
-
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { parsePagination, setPaginationHeaders } from '../common/pagination';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { InvitesService } from './invites.service';
 
-type AuthenticatedRequest = Request & {
-  user: {
-    id: string;
-    name: string;
-    email: string;
-    avatar: string | null;
-    bio: string | null;
-    status: string;
-  };
-};
+type AuthenticatedRequest = Request & { user: { id: string } };
 
 @Controller()
 @UseGuards(JwtAuthGuard)
@@ -33,22 +13,24 @@ export class InvitesController {
   constructor(private readonly invitesService: InvitesService) {}
 
   @Post('groups/:id/invites')
-  create(
-    @Req() request: AuthenticatedRequest,
-    @Param('id') groupId: string,
-    @Body() dto: CreateInviteDto,
-  ) {
+  create(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Body() dto: CreateInviteDto) {
     return this.invitesService.create(request.user.id, groupId, dto);
   }
 
   @Get('invites/sent')
-  findSent(@Req() request: AuthenticatedRequest) {
-    return this.invitesService.findSent(request.user.id);
+  async findSent(@Req() request: AuthenticatedRequest, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) {
+    const pagination = parsePagination(page, limit);
+    const result = await this.invitesService.findSent(request.user.id, pagination);
+    setPaginationHeaders(response!, pagination, result.total);
+    return result.items;
   }
 
   @Get('invites')
-  findReceived(@Req() request: AuthenticatedRequest) {
-    return this.invitesService.findReceived(request.user.id);
+  async findReceived(@Req() request: AuthenticatedRequest, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) {
+    const pagination = parsePagination(page, limit);
+    const result = await this.invitesService.findReceived(request.user.id, pagination);
+    setPaginationHeaders(response!, pagination, result.total);
+    return result.items;
   }
 
   @Patch('invites/:id/accept')

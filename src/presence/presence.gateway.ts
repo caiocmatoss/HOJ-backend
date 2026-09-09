@@ -85,9 +85,7 @@ export class PresenceGateway
   ) {}
 
   afterInit(server: Server): void {
-    console.log(
-      '[Presence] Gateway inicializado.',
-    );
+    void 0;
 
     server.use((socket, next) => {
       void this.authenticateSocket(
@@ -107,10 +105,7 @@ export class PresenceGateway
       socket.data.user;
 
     if (!user) {
-      console.warn(
-        '[Presence] Socket conectado sem usuário autenticado:',
-        socket.id,
-      );
+      console.warn('[presence.gateway] Warning.');;
 
       client.disconnect(true);
 
@@ -141,15 +136,7 @@ export class PresenceGateway
     socket.data.presenceRegistered =
       true;
 
-    console.log(
-      '[Presence] usuário conectado:',
-      {
-        userId,
-        socketId: socket.id,
-        connections:
-          nextConnections,
-      },
-    );
+    void 0;
 
     /**
      * Só existe transição OFFLINE -> ONLINE
@@ -211,15 +198,7 @@ export class PresenceGateway
         nextConnections,
       );
 
-      console.log(
-        '[Presence] socket desconectado, usuário ainda conectado:',
-        {
-          userId,
-          socketId: socket.id,
-          connections:
-            nextConnections,
-        },
-      );
+      void 0;
 
       return;
     }
@@ -228,13 +207,7 @@ export class PresenceGateway
       userId,
     );
 
-    console.log(
-      '[Presence] usuário ficou offline:',
-      {
-        userId,
-        socketId: socket.id,
-      },
-    );
+    void 0;
 
     await this.updateUserStatus(
       userId,
@@ -250,45 +223,14 @@ export class PresenceGateway
     );
   }
 
-  @SubscribeMessage(
-    'presence:get',
-  )
-  handleGet(
-    @ConnectedSocket()
-    client: AppSocket,
-  ): PresenceResponse {
-    const currentUser =
-      client.data.user;
-
-    if (!currentUser) {
-      return {
-        event:
-          'presence:error',
-
-        data: {
-          code: 'UNAUTHORIZED',
-          message:
-            'Usuário não autenticado.',
-        } satisfies PresenceErrorData,
-      };
-    }
-
-    const users: PresenceUser[] =
-      Array.from(
-        this.userConnections.entries(),
-      ).map(
-        ([userId]) => ({
-          id: userId,
-          status: 'ONLINE',
-        }),
-      );
-
-    return {
-      event: 'presence:list',
-      data: users,
-    };
+  @SubscribeMessage('presence:get')
+  async handleGet(@ConnectedSocket() client: AppSocket): Promise<PresenceResponse> {
+    const currentUser = client.data.user;
+    if (!currentUser) return { event: 'presence:error', data: { code: 'UNAUTHORIZED', message: 'Usuário não autenticado.' } satisfies PresenceErrorData };
+    const ids = Array.from(this.userConnections.keys());
+    const users = ids.length === 0 ? [] : await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } });
+    return { event: 'presence:list', data: users.map((user: any) => { const self = user.id === currentUser.id; const preferences = user.privacyPreferences; return { id: user.id, status: self || preferences?.showStatus !== false ? user.status : 'OFFLINE', lastSeenAt: self || preferences?.showLastSeen !== false ? user.lastSeenAt : null }; }) };
   }
-
   private async authenticateSocket(
     socket: AppSocket,
     next: (err?: Error) => void,
@@ -358,7 +300,7 @@ export class PresenceGateway
             select: {
               id: true,
               name: true,
-              email: true,
+
               avatar: true,
               bio: true,
               status: true,
@@ -383,10 +325,7 @@ export class PresenceGateway
     } catch (
       error: unknown
     ) {
-      console.error(
-        '[Presence] erro de autenticação:',
-        error,
-      );
+      console.error('[presence.gateway] Operation failed.');;
 
       next(
         new Error(
@@ -408,19 +347,13 @@ export class PresenceGateway
 
         data: {
           status,
+          ...(status === "OFFLINE" ? { lastSeenAt: new Date() } : {}),
         },
       });
     } catch (
       error: unknown
     ) {
-      console.error(
-        '[Presence] erro ao atualizar status:',
-        {
-          userId,
-          status,
-          error,
-        },
-      );
+      console.error('[presence.gateway] Operation failed.');;
     }
   }
 }

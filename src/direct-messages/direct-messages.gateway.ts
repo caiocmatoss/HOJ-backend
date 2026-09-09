@@ -65,11 +65,11 @@ export class DirectMessagesGateway implements OnGatewayInit {
   ) {}
 
   afterInit(server: Server): void {
-    console.log('');
-    console.log('==========================================');
-    console.log('   DIRECT MESSAGES GATEWAY INICIALIZADO');
-    console.log('   CHAT PRIVADO ATIVO');
-    console.log('==========================================');
+    void 0;
+    void 0;
+    void 0;
+    void 0;
+    void 0;
 
 
     server.use((socket, next) => {
@@ -80,223 +80,22 @@ export class DirectMessagesGateway implements OnGatewayInit {
     });
   }
 
-  private async authenticateSocket(
-    socket: AppSocket,
-    next: (err?: Error) => void,
-  ): Promise<void> {
-    console.log('');
-    console.log('==========================================');
-    console.log('   NOVA CONEXÃO DIRECT SOCKET.IO');
-    console.log('==========================================');
-
-    console.log(
-      `Socket ID: ${socket.id}`,
-    );
-
+  private async authenticateSocket(socket: AppSocket, next: (err?: Error) => void): Promise<void> {
     try {
-      const auth =
-        socket.handshake.auth as
-          | Record<string, unknown>
-          | undefined;
-
-      console.log(
-        'Socket authentication attempted:',
-        auth ? 'SIM' : 'NÃO',
-      );
-
-      const authToken =
-        auth?.token;
-
-      console.log(
-        `Socket authentication attempted: ${
-          typeof authToken === 'string'
-            ? 'SIM'
-            : 'NÃO'
-        }`,
-      );
-
-      if (
-        typeof authToken !== 'string' ||
-        !authToken.trim()
-      ) {
-        console.error(
-          '[DirectMessages] Token não enviado.',
-        );
-
-        next(
-          new Error(
-            'Token não enviado.',
-          ),
-        );
-
-        return;
-      }
-
-      const token =
-        authToken.startsWith('Bearer ')
-          ? authToken
-              .substring(7)
-              .trim()
-          : authToken.trim();
-
-
-      let payload: JwtPayload;
-
-      try {
-        payload =
-          await this.jwtService.verifyAsync<JwtPayload>(
-            token,
-          );
-
-        console.log(
-          '[DirectMessages] JWT validado com sucesso.',
-        );
-
-        console.log(
-          'JWT validado.',
-        );
-
-        console.log(
-          'JWT validado.',
-        );
-      } catch (
-        jwtError: unknown
-      ) {
-        console.error(
-          '[DirectMessages] Erro ao validar JWT:',
-        );
-
-        if (
-          jwtError instanceof Error
-        ) {
-          console.error(
-            `Socket error. ${jwtError.name}`,
-          );
-
-          console.error(
-            `Mensagem: ${jwtError.message}`,
-          );
-        } else {
-          console.error(
-            jwtError,
-          );
-        }
-
-        next(
-          new Error(
-            'JWT inválido.',
-          ),
-        );
-
-        return;
-      }
-
-      if (
-        typeof payload.sub !== 'string' ||
-        !payload.sub.trim()
-      ) {
-        next(
-          new Error(
-            'JWT inválido.',
-          ),
-        );
-
-        return;
-      }
-
-      const user =
-        await this.prisma.user.findUnique({
-          where: {
-            id: payload.sub,
-          },
-
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-            bio: true,
-            status: true,
-          },
-        });
-
-      if (!user) {
-        console.error(
-          '[DirectMessages] Usuário do JWT não encontrado.',
-        );
-
-        console.error(
-          `User ID: ${payload.sub}`,
-        );
-
-        next(
-          new Error(
-            'Usuário não encontrado.',
-          ),
-        );
-
-        return;
-      }
-
-      socket.data.user =
-        user;
-
-      console.log(
-        '[DirectMessages] Usuário autenticado:',
-      );
-
-      console.log(
-        `ID: ${user.id}`,
-      );
-
-      console.log(
-        `Socket error. ${user.name}`,
-      );
-
-      console.log(
-        'Socket user authenticated.',
-      );
-
-      console.log(
-        '[DirectMessages] Socket autorizado.',
-      );
-
-      console.log(
-        '==========================================',
-      );
-
+      const auth = socket.handshake.auth as Record<string, unknown> | undefined;
+      const authToken = auth?.token;
+      if (typeof authToken !== 'string' || !authToken.trim()) return next(new Error('Token não informado.'));
+      const token = authToken.startsWith('Bearer ') ? authToken.substring(7).trim() : authToken.trim();
+      const payload = await this.jwtService.verifyAsync<JwtPayload>(token);
+      if (typeof payload.sub !== 'string' || !payload.sub.trim()) return next(new Error('Token inválido.'));
+      const user = await this.prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, name: true, avatar: true, bio: true, status: true } });
+      if (!user) return next(new Error('Usuário não encontrado.'));
+      socket.data.user = user;
       next();
-    } catch (
-      error: unknown
-    ) {
-      console.error(
-        '[DirectMessages] Erro de autenticação:',
-      );
-
-      if (
-        error instanceof Error
-      ) {
-        console.error(
-          error.message,
-        );
-
-        console.error(
-
-        );
-      } else {
-        console.error(
-          error,
-        );
-      }
-
-      next(
-        new Error(
-          'Erro de autenticação Socket.IO.',
-        ),
-      );
+    } catch {
+      next(new Error('Não autorizado.'));
     }
   }
-
   @SubscribeMessage('direct:join')
   async handleJoin(
     @ConnectedSocket()
@@ -373,20 +172,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
         room,
       );
 
-      console.log(
-        '[DirectMessages] Usuário entrou na conversa:',
-        {
-          userId:
-            currentUser.id,
-
-          otherUserId,
-
-          room,
-
-          socketId:
-            client.id,
-        },
-      );
+      void 0;
 
       return {
         event:
@@ -400,10 +186,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
     } catch (
       error: unknown
     ) {
-      console.error(
-        '[DirectMessages] Erro ao entrar na conversa:',
-        error,
-      );
+      console.error('[direct-messages.gateway] Operation failed.');;
 
       return {
         event:
@@ -480,20 +263,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
       room,
     );
 
-    console.log(
-      '[DirectMessages] Usuário saiu da conversa:',
-      {
-        userId:
-          currentUser.id,
-
-        otherUserId,
-
-        room,
-
-        socketId:
-          client.id,
-      },
-    );
+    void 0;
 
     return {
       event:
@@ -666,21 +436,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
           message,
         );
 
-      console.log(
-        '[DirectMessages] direct:message:new emitido:',
-        {
-          messageId:
-            message.id,
-
-          senderId:
-            message.senderId,
-
-          receiverId:
-            message.receiverId,
-
-          room,
-        },
-      );
+      void 0;
 
       /*
        * Resposta para quem enviou.
@@ -695,10 +451,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
     } catch (
       error: unknown
     ) {
-      console.error(
-        '[DirectMessages] Erro ao enviar mensagem:',
-        error,
-      );
+      console.error('[direct-messages.gateway] Operation failed.');;
 
       return {
         event:

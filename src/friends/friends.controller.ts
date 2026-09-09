@@ -8,10 +8,12 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
+import { parsePagination, setPaginationHeaders } from '../common/pagination';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -43,9 +45,7 @@ export class FriendsController {
   }
 
   @Get()
-  getFriends(@Req() request: AuthenticatedRequest) {
-    return this.friendsService.getFriends(request.user.id);
-  }
+  async getFriends(@Req() request: AuthenticatedRequest, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) { const p = parsePagination(page, limit); const result = await this.friendsService.getFriends(request.user.id, p); setPaginationHeaders(response!, p, result.total); return result.items; }
 
   @Get('nearby')
   getNearbyFriends(
@@ -58,9 +58,7 @@ export class FriendsController {
   }
 
   @Get('requests')
-  getRequests(@Req() request: AuthenticatedRequest) {
-    return this.friendsService.getRequests(request.user.id);
-  }
+  async getRequests(@Req() request: AuthenticatedRequest, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) { const p = parsePagination(page, limit); const result = await this.friendsService.getRequests(request.user.id, p); setPaginationHeaders(response!, p, result.total); return result.items; }
 
   @Patch('requests/:id/accept')
   acceptRequest(

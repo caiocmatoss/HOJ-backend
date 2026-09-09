@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '../../generated/prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -277,88 +278,15 @@ export class VenuesService {
    *
    * GET /venues?latitude=-23.55052&longitude=-46.633308&radius=10
    */
-  async findAll(filters: VenueListFilters = {}) {
-    const venues = await this.prisma.venue.findMany({
-      where: {
-        ...(filters.q ? { OR: [{ name: { contains: filters.q, mode: "insensitive" } }, { address: { contains: filters.q, mode: "insensitive" } }] } : {}),
-        ...(filters.locality ? { locality: { equals: filters.locality, mode: "insensitive" } } : {}),
-        ...(filters.region ? { region: { equals: filters.region, mode: "insensitive" } } : {}),
-        ...(filters.country ? { country: { equals: filters.country, mode: "insensitive" } } : {}),
-        ...(filters.source ? { source: filters.source } : {}),
-        ...(filters.category
-          ? {
-              category: {
-                equals: filters.category,
-                mode: 'insensitive',
-              },
-            }
-          : {}),
-
-        ...(filters.status
-          ? {
-              status: filters.status,
-            }
-          : {}),
-      },
-
-      take: filters.limit ? Math.min(Math.max(filters.limit, 1), 100) : undefined,
-      ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}),
-
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    const now = new Date();
-    const activeOccupancyByVenue = await this.getActiveOccupancyByVenueIds(venues.map((venue) => venue.id), now);
-
-    const hasUserLocation =
-      filters.latitude !== undefined && filters.longitude !== undefined;
-
-    const radius = filters.radius !== undefined ? filters.radius : 50;
-
-    const serialized = venues
-      .map((venue) => {
-        const venueLatitude = Number(venue.latitude);
-
-        const venueLongitude = Number(venue.longitude);
-
-        let distanceKm: number | null = null;
-
-        if (hasUserLocation) {
-          distanceKm = this.calculateDistanceKm(
-            filters.latitude!,
-            filters.longitude!,
-            venueLatitude,
-            venueLongitude,
-          );
-        }
-
-        return {
-          venue: this.serializeVenue(venue, distanceKm, activeOccupancyByVenue.get(venue.id) ?? 0),
-
-          distanceKm,
-        };
-      })
-      .filter((item) => {
-        if (!hasUserLocation) {
-          return true;
-        }
-
-        return item.distanceKm! <= radius;
-      });
-
-    /**
-     * Quando a localização do usuário é enviada,
-     * os locais mais próximos aparecem primeiro.
-     */
-    if (hasUserLocation) {
-      serialized.sort((a, b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0));
-    }
-
-    return serialized.map((item) => item.venue);
+  async findAll(filters: VenueListFilters = {}, pagination?: import('../common/pagination').Pagination): Promise<any> {
+    const where: Prisma.VenueWhereInput = { ...(filters.q ? { OR: [{ name: { contains: filters.q, mode: 'insensitive' } }, { address: { contains: filters.q, mode: 'insensitive' } }] } : {}), ...(filters.locality ? { locality: { equals: filters.locality, mode: 'insensitive' } } : {}), ...(filters.region ? { region: { equals: filters.region, mode: 'insensitive' } } : {}), ...(filters.country ? { country: { equals: filters.country, mode: 'insensitive' } } : {}), ...(filters.source ? { source: filters.source } : {}), ...(filters.category ? { category: { equals: filters.category, mode: 'insensitive' } } : {}), ...(filters.status ? { status: filters.status } : {}) };
+    const geo = filters.latitude !== undefined && filters.longitude !== undefined;
+    const venues = await this.prisma.venue.findMany({ where, ...(geo || !pagination ? {} : { skip: pagination.skip, take: pagination.take }), ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}), orderBy: { createdAt: 'desc' } });
+    const now = new Date(); const active = await this.getActiveOccupancyByVenueIds(venues.map((v) => v.id), now); const radius = filters.radius ?? 50;
+    let serialized = venues.map((venue) => { const distanceKm = geo ? this.calculateDistanceKm(filters.latitude!, filters.longitude!, Number(venue.latitude), Number(venue.longitude)) : null; return { venue: this.serializeVenue(venue, distanceKm, active.get(venue.id) ?? 0), distanceKm }; }).filter((item) => !geo || (item.distanceKm ?? 0) <= radius);
+    if (geo) serialized.sort((a,b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0));
+    const total = geo ? serialized.length : (pagination ? await this.prisma.venue.count({ where }) : serialized.length); const allItems = serialized.map((item) => item.venue); const items = geo && pagination ? allItems.slice(pagination.skip, pagination.skip + pagination.take) : allItems; return pagination && !filters.cursor ? { items, total } : items;
   }
-
   async findOne(id: string) {
     const venue = await this.prisma.venue.findUnique({
       where: {

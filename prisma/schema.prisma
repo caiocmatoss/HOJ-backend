@@ -71,6 +71,7 @@ model User {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   emailVerifiedAt DateTime?
+  lastSeenAt       DateTime?
 
   friendshipsSent     Friendship[] @relation("FriendshipRequester")
   friendshipsReceived Friendship[] @relation("FriendshipAddressee")
@@ -118,6 +119,7 @@ model PrivacyPreferences {
   id                 String   @id @default(cuid())
   userId             String   @unique
   showStatus         Boolean  @default(true)
+  showLastSeen       Boolean  @default(true)
   showCheckinHistory Boolean  @default(false)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

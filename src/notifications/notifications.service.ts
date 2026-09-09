@@ -1,3 +1,5 @@
+import type { Pagination, PaginatedResult } from '../common/pagination';
+
 import { Injectable, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -61,29 +63,17 @@ export class NotificationsService {
     return notification;
   }
 
-  async findAll(userId: string) {
-    return this.prisma.notification.findMany({
-      where: {
-        userId,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async findAll(userId: string, pagination?: Pagination): Promise<any> {
+    const where = { userId };
+    if (pagination) { const [items, total] = await Promise.all([this.prisma.notification.findMany({ where, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.take }), this.prisma.notification.count({ where })]); return { items, total }; }
+    return this.prisma.notification.findMany({ where, orderBy: { createdAt: 'desc' } });
   }
 
-  async findUnread(userId: string) {
-    return this.prisma.notification.findMany({
-      where: {
-        userId,
-        readAt: null,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async findUnread(userId: string, pagination?: Pagination): Promise<any> {
+    const where = { userId, readAt: null };
+    if (pagination) { const [items, total] = await Promise.all([this.prisma.notification.findMany({ where, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.take }), this.prisma.notification.count({ where })]); return { items, total }; }
+    return this.prisma.notification.findMany({ where, orderBy: { createdAt: 'desc' } });
   }
-
   async countUnread(userId: string) {
     const count = await this.prisma.notification.count({
       where: {
