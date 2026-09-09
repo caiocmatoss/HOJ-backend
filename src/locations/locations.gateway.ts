@@ -1,4 +1,4 @@
-﻿import {
+import {
   Ack,
   ConnectedSocket,
   MessageBody,
@@ -77,12 +77,8 @@ export class LocationsGateway implements OnGatewayInit {
     console.log('   LOCATION REALTIME ATIVO');
     console.log('==========================================');
 
-    const jwtSecret = process.env.JWT_SECRET;
 
-    console.log(`JWT_SECRET existe: ${Boolean(jwtSecret)}`);
-    console.log(`JWT_SECRET tamanho: ${jwtSecret?.length ?? 0}`);
-
-    server.use((socket: Socket, next) => {
+server.use((socket: Socket, next) => {
       void this.authenticateSocket(socket as LocationSocket, next);
     });
 
@@ -105,12 +101,12 @@ export class LocationsGateway implements OnGatewayInit {
     try {
       const auth = socket.handshake.auth as Record<string, unknown> | undefined;
 
-      console.log('Handshake auth recebido:', auth ? 'SIM' : 'NÃO');
+      console.log('Socket authentication attempted:', auth ? 'SIM' : 'NÃO');
 
       const authToken = auth?.token;
 
       console.log(
-        `Token recebido: ${typeof authToken === 'string' ? 'SIM' : 'NÃO'}`,
+        `Socket authentication attempted: ${typeof authToken === 'string' ? 'SIM' : 'NÃO'}`,
       );
 
       if (typeof authToken !== 'string' || !authToken.trim()) {
@@ -135,17 +131,17 @@ export class LocationsGateway implements OnGatewayInit {
         payload = await this.jwtService.verifyAsync<JwtPayload>(token);
 
         console.log('[Locations] JWT VALIDADO COM SUCESSO.');
-        console.log(`[Locations] JWT sub: ${payload.sub}`);
-        console.log(`[Locations] JWT email: ${payload.email}`);
+        console.log('[Locations] JWT validado.');
+        console.log('[Locations] JWT validado.');
       } catch (error: unknown) {
         console.error('');
         console.error('========== ERRO AO VALIDAR JWT ==========');
 
         if (error instanceof Error) {
-          console.error(`Nome: ${error.name}`);
+          console.error(`Socket error. ${error.name}`);
           console.error(`Mensagem: ${error.message}`);
         } else {
-          console.error(error);
+          console.error('Socket operation failed.');
         }
 
         console.error('==========================================');
@@ -192,8 +188,8 @@ export class LocationsGateway implements OnGatewayInit {
       console.log('');
       console.log('[Locations] USUÁRIO SOCKET AUTENTICADO:');
       console.log(`[Locations] ID: ${user.id}`);
-      console.log(`[Locations] Nome: ${user.name}`);
-      console.log(`[Locations] Email: ${user.email}`);
+      console.log(`[Locations] Socket error. ${user.name}`);
+      console.log('[Locations] Socket user authenticated.');
       console.log('[Locations] Socket autorizado com sucesso.');
       console.log('==========================================');
 
@@ -203,11 +199,11 @@ export class LocationsGateway implements OnGatewayInit {
       console.error('========== ERRO LOCATION SOCKET.IO ==========');
 
       if (error instanceof Error) {
-        console.error(`Nome: ${error.name}`);
+        console.error(`Socket error. ${error.name}`);
         console.error(`Mensagem: ${error.message}`);
-        console.error(error.stack);
+        console.error('Socket operation failed.');
       } else {
-        console.error(error);
+        console.error('Socket operation failed.');
       }
 
       console.error('=============================================');

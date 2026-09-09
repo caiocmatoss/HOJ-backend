@@ -1,4 +1,6 @@
-﻿import { Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -19,9 +21,11 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
 import { PresenceModule } from './presence/presence.module';
 import { PrivacyModule } from './privacy/privacy.module';
+import { securityConfig } from './config/security-config';
 
 @Module({
   imports: [
+    ThrottlerModule.forRoot([{ limit: securityConfig.globalLimit, ttl: securityConfig.globalTtlSeconds * 1000 }]),
     PrismaModule,
     UsersModule,
     AuthModule,
@@ -42,7 +46,7 @@ import { PrivacyModule } from './privacy/privacy.module';
 
   controllers: [AppController],
 
-  providers: [AppService],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}
 

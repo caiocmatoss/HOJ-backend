@@ -71,15 +71,6 @@ export class DirectMessagesGateway implements OnGatewayInit {
     console.log('   CHAT PRIVADO ATIVO');
     console.log('==========================================');
 
-    const jwtSecret = process.env.JWT_SECRET;
-
-    console.log(
-      `JWT_SECRET existe: ${Boolean(jwtSecret)}`,
-    );
-
-    console.log(
-      `JWT_SECRET tamanho: ${jwtSecret?.length ?? 0}`,
-    );
 
     server.use((socket, next) => {
       void this.authenticateSocket(
@@ -109,7 +100,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
           | undefined;
 
       console.log(
-        'Handshake auth recebido:',
+        'Socket authentication attempted:',
         auth ? 'SIM' : 'NÃO',
       );
 
@@ -117,7 +108,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
         auth?.token;
 
       console.log(
-        `Token recebido: ${
+        `Socket authentication attempted: ${
           typeof authToken === 'string'
             ? 'SIM'
             : 'NÃO'
@@ -148,9 +139,6 @@ export class DirectMessagesGateway implements OnGatewayInit {
               .trim()
           : authToken.trim();
 
-      console.log(
-        `JWT após tratamento: ${token.length} caracteres`,
-      );
 
       let payload: JwtPayload;
 
@@ -165,11 +153,11 @@ export class DirectMessagesGateway implements OnGatewayInit {
         );
 
         console.log(
-          `JWT sub: ${payload.sub}`,
+          'JWT validado.',
         );
 
         console.log(
-          `JWT email: ${payload.email}`,
+          'JWT validado.',
         );
       } catch (
         jwtError: unknown
@@ -182,7 +170,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
           jwtError instanceof Error
         ) {
           console.error(
-            `Nome: ${jwtError.name}`,
+            `Socket error. ${jwtError.name}`,
           );
 
           console.error(
@@ -262,11 +250,11 @@ export class DirectMessagesGateway implements OnGatewayInit {
       );
 
       console.log(
-        `Nome: ${user.name}`,
+        `Socket error. ${user.name}`,
       );
 
       console.log(
-        `Email: ${user.email}`,
+        'Socket user authenticated.',
       );
 
       console.log(
@@ -293,7 +281,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
         );
 
         console.error(
-          error.stack,
+
         );
       } else {
         console.error(

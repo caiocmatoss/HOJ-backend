@@ -72,20 +72,6 @@ export class MessagesGateway implements OnGatewayInit {
       '==========================================',
     );
 
-    const jwtSecret =
-      process.env.JWT_SECRET;
-
-    console.log(
-      `JWT_SECRET existe: ${Boolean(
-        jwtSecret,
-      )}`,
-    );
-
-    console.log(
-      `JWT_SECRET tamanho: ${
-        jwtSecret?.length ?? 0
-      }`,
-    );
 
     server.use(
       (
@@ -126,7 +112,7 @@ export class MessagesGateway implements OnGatewayInit {
           | undefined;
 
       console.log(
-        'Handshake auth recebido:',
+        'Socket authentication attempted:',
         auth ? 'SIM' : 'NÃO',
       );
 
@@ -134,7 +120,7 @@ export class MessagesGateway implements OnGatewayInit {
         auth?.token;
 
       console.log(
-        `Token recebido: ${
+        `Socket authentication attempted: ${
           typeof authToken === 'string'
             ? 'SIM'
             : 'NÃO'
@@ -159,9 +145,6 @@ export class MessagesGateway implements OnGatewayInit {
         return;
       }
 
-      console.log(
-        `Token tamanho: ${authToken.length}`,
-      );
 
       const token =
         authToken.startsWith(
@@ -172,9 +155,6 @@ export class MessagesGateway implements OnGatewayInit {
               .trim()
           : authToken.trim();
 
-      console.log(
-        `JWT após tratamento: ${token.length} caracteres`,
-      );
 
       let payload: JwtPayload;
 
@@ -189,11 +169,11 @@ export class MessagesGateway implements OnGatewayInit {
         );
 
         console.log(
-          `JWT sub: ${payload.sub}`,
+          'JWT validado.',
         );
 
         console.log(
-          `JWT email: ${payload.email}`,
+          'JWT validado.',
         );
       } catch (
         jwtError: unknown
@@ -208,7 +188,7 @@ export class MessagesGateway implements OnGatewayInit {
           Error
         ) {
           console.error(
-            `Nome: ${jwtError.name}`,
+            `Socket error. ${jwtError.name}`,
           );
 
           console.error(
@@ -294,11 +274,11 @@ export class MessagesGateway implements OnGatewayInit {
       );
 
       console.log(
-        `Nome: ${user.name}`,
+        `Socket error. ${user.name}`,
       );
 
       console.log(
-        `Email: ${user.email}`,
+        'Socket user authenticated.',
       );
 
       socket.data.user =
@@ -328,7 +308,7 @@ export class MessagesGateway implements OnGatewayInit {
         error instanceof Error
       ) {
         console.error(
-          `Nome: ${error.name}`,
+          `Socket error. ${error.name}`,
         );
 
         console.error(
@@ -336,7 +316,7 @@ export class MessagesGateway implements OnGatewayInit {
         );
 
         console.error(
-          error.stack,
+
         );
       } else {
         console.error(
