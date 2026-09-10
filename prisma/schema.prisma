@@ -98,9 +98,15 @@ model User {
   privacyPreferences      PrivacyPreferences?
   authSessions            AuthSession[]
   authActionTokens        AuthActionToken[]
+  pushDevices             PushDevice[]
 
   @@index([name])
   @@index([status])
+}
+
+enum PushPlatform {
+  IOS
+  ANDROID
 }
 
 model LocationPreferences {
@@ -137,6 +143,9 @@ model NotificationPreferences {
   promotions     Boolean  @default(false)
   appUpdates     Boolean  @default(true)
   weeklyDigest   Boolean  @default(false)
+  pushEnabled    Boolean  @default(true)
+  friendRequests Boolean  @default(true)
+  groupInvites   Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -381,12 +390,54 @@ model Notification {
   createdAt     DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries PushDelivery[]
 
   @@index([userId, createdAt])
   @@index([userId, readAt])
   @@index([type])
 }
 
+model PushDevice {
+  id         String       @id @default(cuid())
+  userId     String
+  token      String       @unique
+  platform   PushPlatform
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  lastUsedAt DateTime?
+  disabledAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries PushDelivery[]
+
+  @@index([userId])
+  @@index([userId, disabledAt])
+}
+
+enum PushDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model PushDelivery {
+  id             String             @id @default(cuid())
+  notificationId String
+  pushDeviceId   String
+  ticketId       String             @unique
+  status         PushDeliveryStatus @default(PENDING)
+  errorCode      String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  checkedAt      DateTime?
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  pushDevice   PushDevice   @relation(fields: [pushDeviceId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([pushDeviceId])
+  @@index([notificationId])
+}
 model AuthSession {
   id        String    @id @default(cuid())
   userId    String

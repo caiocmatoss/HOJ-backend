@@ -7,12 +7,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { NotificationsGateway } from './notifications.gateway';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
+import { NotificationPushService } from './notification-push.service';
 
 @Injectable()
 export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsGateway: NotificationsGateway,
+    private readonly notificationPushService: NotificationPushService,
   ) {}
 
   getPreferences(userId: string) {
@@ -60,9 +62,22 @@ export class NotificationsService {
       .to(`user:${userId}`)
       .emit('notification:new', notification);
 
+    await this.notificationPushService.dispatch(notification);
+
     return notification;
   }
 
+  async createMany(userIds: string[], dto: CreateNotificationDto): Promise<any[]> {
+    const uniqueUserIds = [...new Set(userIds)];
+    if (!uniqueUserIds.length) return [];
+    const users = await this.prisma.user.findMany({ where: { id: { in: uniqueUserIds } }, select: { id: true } });
+    const validIds = users.map((user) => user.id);
+    if (!validIds.length) return [];
+    const notifications = await this.prisma.$transaction(validIds.map((userId) => this.prisma.notification.create({ data: { userId, type: dto.type, title: dto.title, message: dto.message, referenceId: dto.referenceId, referenceType: dto.referenceType } })));
+    for (const notification of notifications) this.notificationsGateway.server.to(`user:${notification.userId}`).emit('notification:new', notification);
+    await this.notificationPushService.dispatchMany(notifications);
+    return notifications;
+  }
   async findAll(userId: string, pagination?: Pagination): Promise<any> {
     const where = { userId };
     if (pagination) { const [items, total] = await Promise.all([this.prisma.notification.findMany({ where, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.take }), this.prisma.notification.count({ where })]); return { items, total }; }

@@ -1,0 +1,6 @@
+export const MESSAGE_NOTIFICATION_TYPES = {
+  DIRECT_MESSAGE: 'DIRECT_MESSAGE',
+  GROUP_MESSAGE: 'GROUP_MESSAGE',
+} as const;
+
+export type MessageNotificationType = typeof MESSAGE_NOTIFICATION_TYPES[keyof typeof MESSAGE_NOTIFICATION_TYPES];

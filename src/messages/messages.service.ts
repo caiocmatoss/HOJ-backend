@@ -3,10 +3,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PUBLIC_USER_SELECT } from '../users/user-selects';
 import type { Pagination, PaginatedResult } from '../common/pagination';
 import { CreateMessageDto } from './dto/create-message.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { MESSAGE_NOTIFICATION_TYPES } from '../notifications/notification-types';
 
 @Injectable()
 export class MessagesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly notificationsService: NotificationsService) {}
 
   private async ensureMember(userId: string, groupId: string) {
     const group = await this.prisma.group.findUnique({ where: { id: groupId } });
@@ -27,10 +29,10 @@ export class MessagesService {
     await this.ensureMember(userId, groupId);
     const text = dto.text.trim();
     if (!text) throw new NotFoundException('A mensagem não pode estar vazia.');
-    return this.prisma.message.create({
-      data: { groupId, userId, text },
-      include: { user: { select: PUBLIC_USER_SELECT } },
-    }).then((message: any) => ({ ...message, user: this.publicUser(message.user) }));
+    const message = await this.prisma.message.create({ data: { groupId, userId, text }, include: { user: { select: PUBLIC_USER_SELECT } } });
+    const members = await this.prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } });
+    await this.notificationsService.createMany(members.filter((member) => member.userId !== userId).map((member) => member.userId), { type: MESSAGE_NOTIFICATION_TYPES.GROUP_MESSAGE, title: 'Nova mensagem no grupo', message: 'Você recebeu uma nova mensagem em um grupo.', referenceId: groupId, referenceType: 'GROUP' });
+    return { ...message, user: this.publicUser(message.user) };
   }
 
   async findAll(userId: string, groupId: string, pagination: Pagination): Promise<PaginatedResult<any>>;

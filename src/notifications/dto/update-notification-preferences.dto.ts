@@ -9,4 +9,7 @@ export class UpdateNotificationPreferencesDto {
   @IsOptional() @IsBoolean() promotions?: boolean;
   @IsOptional() @IsBoolean() appUpdates?: boolean;
   @IsOptional() @IsBoolean() weeklyDigest?: boolean;
+  @IsOptional() @IsBoolean() pushEnabled?: boolean;
+  @IsOptional() @IsBoolean() friendRequests?: boolean;
+  @IsOptional() @IsBoolean() groupInvites?: boolean;
 }

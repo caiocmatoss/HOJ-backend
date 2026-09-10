@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -27,6 +28,7 @@ import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ limit: securityConfig.globalLimit, ttl: securityConfig.globalTtlSeconds * 1000 }]),
     PrismaModule,
     UsersModule,

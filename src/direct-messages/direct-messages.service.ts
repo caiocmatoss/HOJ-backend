@@ -3,10 +3,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PUBLIC_USER_SELECT } from '../users/user-selects';
 import type { Pagination, PaginatedResult } from '../common/pagination';
 import { SendDirectMessageDto } from './dto/send-direct-message.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { MESSAGE_NOTIFICATION_TYPES } from '../notifications/notification-types';
 
 @Injectable()
 export class DirectMessagesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly notificationsService: NotificationsService) {}
 
   private async ensureUserExists(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: PUBLIC_USER_SELECT });
@@ -32,10 +34,9 @@ export class DirectMessagesService {
     const text = dto.text.trim();
     if (!text) throw new NotFoundException('A mensagem não pode estar vazia.');
     if (text.length > 2000) throw new NotFoundException('A mensagem não pode ter mais de 2000 caracteres.');
-    return this.prisma.directMessage.create({
-      data: { senderId, receiverId, text },
-      include: { sender: { select: PUBLIC_USER_SELECT }, receiver: { select: PUBLIC_USER_SELECT } },
-    }).then((message: any) => ({ ...message, sender: this.publicUser(message.sender), receiver: this.publicUser(message.receiver) }));
+    const message = await this.prisma.directMessage.create({ data: { senderId, receiverId, text }, include: { sender: { select: PUBLIC_USER_SELECT }, receiver: { select: PUBLIC_USER_SELECT } } });
+    await this.notificationsService.create(receiverId, { type: MESSAGE_NOTIFICATION_TYPES.DIRECT_MESSAGE, title: 'Nova mensagem', message: 'Você recebeu uma nova mensagem.', referenceId: senderId, referenceType: 'USER' });
+    return { ...message, sender: this.publicUser(message.sender), receiver: this.publicUser(message.receiver) };
   }
 
   async findConversation(userId: string, otherUserId: string, pagination: Pagination): Promise<PaginatedResult<any>>;
