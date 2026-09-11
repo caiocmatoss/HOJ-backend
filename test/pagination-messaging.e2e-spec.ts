@@ -12,6 +12,7 @@ describe('Messaging and invites pagination (e2e)', () => {
   let tokenC: string;
   let ids: string[] = [];
   let groupId: string;
+  let venueId: string;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -30,8 +31,9 @@ describe('Messaging and invites pagination (e2e)', () => {
       if (i === 1) tokenB = response.body.accessToken;
       if (i === 2) tokenC = response.body.accessToken;
     }
-    const venue = await prisma.venue.findFirst();
-    const group = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${tokenA}`).send({ name: `Messaging Group ${stamp}`, venueId: venue!.id }).expect(201);
+    const venue = await prisma.venue.create({ data: { name: `Messaging Test Venue ${stamp}`, category: 'Integração', address: 'Rua Teste, 1', latitude: -23.55052, longitude: -46.63331 } });
+    venueId = venue.id;
+    const group = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${tokenA}`).send({ name: `Messaging Group ${stamp}`, venueId }).expect(201);
     groupId = group.body.id;
     await request(app.getHttpServer()).post(`/groups/${groupId}/members`).set('Authorization', `Bearer ${tokenA}`).send({ userId: ids[1] }).expect(201);
     for (let i = 0; i < 3; i += 1) {
@@ -44,10 +46,13 @@ describe('Messaging and invites pagination (e2e)', () => {
   });
 
   afterAll(async () => {
-    await prisma.group.deleteMany({ where: { id: groupId } });
-    await prisma.directMessage.deleteMany({ where: { OR: [{ senderId: { in: ids } }, { receiverId: { in: ids } }] } });
-    await prisma.user.deleteMany({ where: { id: { in: ids } } });
-    await app.close();
+    if (prisma) {
+      if (groupId) await prisma.group.deleteMany({ where: { id: groupId } });
+      if (venueId) await prisma.venue.deleteMany({ where: { id: venueId } });
+      if (ids.length) await prisma.directMessage.deleteMany({ where: { OR: [{ senderId: { in: ids } }, { receiverId: { in: ids } }] } });
+      if (ids.length) await prisma.user.deleteMany({ where: { id: { in: ids } } });
+    }
+    if (app) await app.close();
   });
 
   const assertPublicUser = (user: any) => {

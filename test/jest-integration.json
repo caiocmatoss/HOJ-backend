@@ -1,0 +1,12 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testMatch": ["<rootDir>/test/messages.e2e-spec.ts", "<rootDir>/test/pagination-messaging.e2e-spec.ts", "<rootDir>/test/messages-read-state.e2e-spec.ts", "<rootDir>/test/auth-session.integration-spec.ts"],
+  "transform": { "^.+\\.(t|j)s$": "ts-jest" },
+  "moduleNameMapper": {
+    "^@nestjs/schedule$": "<rootDir>/test/mocks/nestjs-schedule.ts",
+    "^expo-server-sdk$": "<rootDir>/test/mocks/expo-server-sdk.cjs",
+    "^(\\.{1,2}/.*)\\.js$": "$1"
+  }
+}
