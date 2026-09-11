@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DirectMessagesService } from './direct-messages.service';
 
 import type { AppSocket } from '../auth/socket/socket.types';
+import { DirectReadEvents, type DirectReadEvent } from '../realtime/direct-read-events';
 
 type ChatErrorData = {
   code?: string;
@@ -62,6 +63,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
     private readonly directMessagesService: DirectMessagesService,
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
+    private readonly directReadEvents: DirectReadEvents,
   ) {}
 
   afterInit(server: Server): void {
@@ -96,6 +98,12 @@ export class DirectMessagesGateway implements OnGatewayInit {
       next(new Error('Não autorizado.'));
     }
   }
+
+  onModuleInit(): void { this.directReadEvents.on('direct:read', this.handleDirectRead); }
+
+  private readonly handleDirectRead = (event: DirectReadEvent): void => {
+    this.server?.to(getDirectRoom(event.userId, event.peerUserId)).emit('direct:read', event);
+  };
   @SubscribeMessage('direct:join')
   async handleJoin(
     @ConnectedSocket()
@@ -274,6 +282,22 @@ export class DirectMessagesGateway implements OnGatewayInit {
           otherUserId,
       },
     };
+  }
+
+  @SubscribeMessage('direct:typing')
+  async handleTyping(@ConnectedSocket() client: AppSocket, @MessageBody() data: { peerUserId?: string; isTyping?: boolean }): Promise<DirectChatResponse> {
+    const currentUser = client.data.user;
+    const peerUserId = typeof data?.peerUserId === 'string' ? data.peerUserId.trim() : '';
+    if (!currentUser) return { event: 'direct:chat:error', data: { code: 'UNAUTHORIZED', message: 'Usuário não autenticado no socket.' } };
+    if (!peerUserId || peerUserId === currentUser.id || typeof data?.isTyping !== 'boolean') return { event: 'direct:chat:error', data: { code: 'INVALID_TYPING', message: 'Dados de digitação inválidos.' } };
+    try {
+      const friendship = await this.prisma.friendship.findFirst({ where: { status: 'ACCEPTED', OR: [{ requesterId: currentUser.id, addresseeId: peerUserId }, { requesterId: peerUserId, addresseeId: currentUser.id }] }, select: { id: true } });
+      if (!friendship) throw new Error('Conversa não encontrada.');
+      client.to(getDirectRoom(currentUser.id, peerUserId)).emit('direct:typing', { userId: currentUser.id, isTyping: data.isTyping, occurredAt: new Date().toISOString() });
+      return { event: 'direct:typing', data: { userId: currentUser.id, isTyping: data.isTyping } };
+    } catch (error) {
+      return { event: 'direct:chat:error', data: { code: 'DIRECT_TYPING_ERROR', message: error instanceof Error ? error.message : 'Não foi possível atualizar a digitação.' } };
+    }
   }
 
   @SubscribeMessage('direct:message:send')

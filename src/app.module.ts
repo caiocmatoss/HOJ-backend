@@ -25,6 +25,7 @@ import { PrivacyModule } from './privacy/privacy.module';
 import { securityConfig } from './config/security-config';
 import { PublicPrivacyInterceptor } from './common/public-privacy.interceptor';
 import { StorageModule } from './storage/storage.module';
+import { RealtimeEventsModule } from './realtime/realtime-events.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { StorageModule } from './storage/storage.module';
     PresenceModule,
     PrivacyModule,
     StorageModule,
+    RealtimeEventsModule,
   ],
 
   controllers: [AppController],

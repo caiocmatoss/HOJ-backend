@@ -9,6 +9,7 @@ import { AuthModule } from '../auth/auth.module';
 import { DirectMessagesController } from './direct-messages.controller';
 import { DirectMessagesGateway } from './direct-messages.gateway';
 import { DirectMessagesService } from './direct-messages.service';
+import { RealtimeEventsModule } from '../realtime/realtime-events.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { DirectMessagesService } from './direct-messages.service';
     NotificationsModule,
     AuthModule,
     JwtModule,
+    RealtimeEventsModule,
   ],
 
   controllers: [

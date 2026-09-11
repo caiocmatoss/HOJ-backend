@@ -1,8 +1,17 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { io, type Socket } from 'socket.io-client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+
+function waitForSocketEvent<T>(socket: Socket, event: string, label: string, timeoutMs = 2000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => { socket.off(event, onEvent); reject(new Error(`Timed out waiting for ${label}`)); }, timeoutMs);
+    const onEvent = (payload: T) => { clearTimeout(timer); socket.off(event, onEvent); resolve(payload); };
+    socket.once(event, onEvent);
+  });
+}
 
 describe('Messaging inbox and read state (integration)', () => {
   let app: INestApplication;
@@ -12,13 +21,17 @@ describe('Messaging inbox and read state (integration)', () => {
   let c: { id: string; token: string };
   let venueId: string;
   let groupId: string;
+  let baseUrl: string;
   const ids: string[] = [];
   const password = 'Teste@123456';
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
-    await app.init();
+    await app.listen(0);
+    const address = app.getHttpServer().address();
+    if (!address || typeof address === 'string') throw new Error('Server address unavailable');
+    baseUrl = `http://127.0.0.1:${address.port}`;
     prisma = app.get(PrismaService);
     const stamp = Date.now();
     const register = async (name: string, index: number) => {
@@ -113,5 +126,44 @@ describe('Messaging inbox and read state (integration)', () => {
     expect(first.body[0].threadKey).not.toBe(second.body[0].threadKey);
     const unread = await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${a.token}`).expect(200);
     expect(typeof unread.body.count).toBe('number');
+  });
+
+  it('returns direct self and peer read cursors from PostgreSQL', async () => {
+    const message = await prisma.directMessage.create({ data: { senderId: b.id, receiverId: a.id, text: 'read-state endpoint', createdAt: new Date('2026-01-10T00:00:00.000Z') } });
+    await request(app.getHttpServer()).post('/messages/read').set('Authorization', `Bearer ${a.token}`).send({ threadType: 'DIRECT', threadKey: b.id, messageId: message.id }).expect(201);
+    const response = await request(app.getHttpServer()).get(`/messages/read-state/direct/${a.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    expect(response.body.peer.lastReadMessageId).toBe(message.id);
+    expect(response.body.peer.lastReadAt).toBe(message.createdAt.toISOString());
+    expect(response.body.threadType).toBe('DIRECT');
+  });
+
+  it('delivers authenticated direct typing and read events without sender identity from payload', async () => {
+    const sockets: Socket[] = [];
+    const connect = (token: string, label: string) => new Promise<Socket>((resolve, reject) => { const socket = io(baseUrl, { transports: ['websocket'], auth: { token } }); sockets.push(socket); const timer = setTimeout(() => { socket.close(); reject(new Error(`Timed out waiting for ${label} connection`)); }, 2000); socket.once('connect', () => { clearTimeout(timer); resolve(socket); }); socket.once('connect_error', (error) => { clearTimeout(timer); reject(error); }); });
+    try {
+      const [socketA, socketB] = await Promise.all([connect(a.token, 'socketA'), connect(b.token, 'socketB')]);
+      const joinedA = waitForSocketEvent<{ userId: string }>(socketA, 'direct:chat:joined', 'direct:chat:joined on socketA'); socketA.emit('direct:join', { userId: b.id }); await joinedA;
+      const joinedB = waitForSocketEvent<{ userId: string }>(socketB, 'direct:chat:joined', 'direct:chat:joined on socketB'); socketB.emit('direct:join', { userId: a.id }); await joinedB;
+      const typing = waitForSocketEvent<any>(socketB, 'direct:typing', 'direct:typing on socketB');
+      socketA.emit('direct:typing', { peerUserId: b.id, isTyping: true });
+      await expect(typing).resolves.toMatchObject({ userId: a.id, isTyping: true });
+      const message = await prisma.directMessage.create({ data: { senderId: b.id, receiverId: a.id, text: 'receipt event', createdAt: new Date('2026-01-11T00:00:00.000Z') } });
+      const receipt = waitForSocketEvent<any>(socketB, 'direct:read', 'direct:read on socketB');
+      await request(app.getHttpServer()).post('/messages/read').set('Authorization', `Bearer ${a.token}`).send({ threadType: 'DIRECT', threadKey: b.id, messageId: message.id }).expect(201);
+      await expect(receipt).resolves.toMatchObject({ userId: a.id, peerUserId: b.id, lastReadMessageId: message.id });
+    } finally { await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); }))); }
+  });
+
+  it('delivers group typing only to members with server-derived public identity', async () => {
+    const sockets: Socket[] = [];
+    const connect = (token: string, label: string) => new Promise<Socket>((resolve, reject) => { const socket = io(baseUrl, { transports: ['websocket'], auth: { token } }); sockets.push(socket); const timer = setTimeout(() => { socket.close(); reject(new Error(`Timed out waiting for ${label} connection`)); }, 2000); socket.once('connect', () => { clearTimeout(timer); resolve(socket); }); socket.once('connect_error', (error) => { clearTimeout(timer); reject(error); }); });
+    try {
+      const [socketA, socketB] = await Promise.all([connect(a.token, 'socketA'), connect(b.token, 'socketB')]);
+      socketA.emit('chat:join', { groupId }); socketB.emit('chat:join', { groupId });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const typing = waitForSocketEvent<any>(socketB, 'chat:typing', 'chat:typing on socketB');
+      socketA.emit('chat:typing', { groupId, isTyping: true });
+      await expect(typing).resolves.toMatchObject({ groupId, userId: a.id, user: { id: a.id, name: 'Read State A' }, isTyping: true });
+    } finally { await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); }))); }
   });
 });

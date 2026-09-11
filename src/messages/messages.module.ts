@@ -7,9 +7,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { MessagesController } from './messages.controller';
 import { MessagesGateway } from './messages.gateway';
 import { MessagesService } from './messages.service';
+import { RealtimeEventsModule } from '../realtime/realtime-events.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, NotificationsModule],
+  imports: [PrismaModule, AuthModule, NotificationsModule, RealtimeEventsModule],
 
   controllers: [MessagesController],
 

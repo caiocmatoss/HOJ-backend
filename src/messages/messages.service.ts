@@ -104,6 +104,14 @@ export class MessagesService {
     return { count: Number(row?.count ?? 0) };
   }
 
+  async directReadState(userId: string, peerUserId: string) {
+    const peers = await this.acceptedPeerIds(userId);
+    if (peerUserId === userId || !peers.includes(peerUserId)) throw new NotFoundException('Conversa não encontrada.');
+    const states = await this.prisma.messageReadState.findMany({ where: { OR: [{ userId, threadType: 'DIRECT', threadKey: peerUserId }, { userId: peerUserId, threadType: 'DIRECT', threadKey: userId }] }, select: { userId: true, lastReadAt: true, lastReadMessageId: true } });
+    const cursor = (state?: (typeof states)[number]) => ({ lastReadAt: state?.lastReadAt?.toISOString() ?? null, lastReadMessageId: state?.lastReadMessageId ?? null });
+    return { threadType: 'DIRECT' as const, threadKey: peerUserId, self: cursor(states.find((state) => state.userId === userId)), peer: cursor(states.find((state) => state.userId === peerUserId)) };
+  }
+
   async markRead(userId: string, threadType: 'DIRECT' | 'GROUP', threadKey: string, messageId?: string) {
     if (threadType !== 'DIRECT' && threadType !== 'GROUP') throw new BadRequestException('threadType inválido.');
     let target: { id: string; createdAt: Date } | null = null;

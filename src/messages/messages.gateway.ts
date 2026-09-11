@@ -431,6 +431,23 @@ export class MessagesGateway implements OnGatewayInit {
     }
   }
 
+  @SubscribeMessage('chat:typing')
+  async handleTyping(@ConnectedSocket() client: AppSocket, @MessageBody() data: { groupId?: string; isTyping?: boolean }): Promise<void> {
+    const user = client.data.user;
+    const groupId = typeof data?.groupId === 'string' ? data.groupId.trim() : '';
+    if (!user || !groupId || typeof data?.isTyping !== 'boolean') {
+      this.server.to(client.id).emit('chat:error', { code: 'INVALID_TYPING', message: 'Dados de digitação inválidos.' });
+      return;
+    }
+    try {
+      const member = await this.prisma.groupMember.findUnique({ where: { groupId_userId: { groupId, userId: user.id } }, select: { userId: true } });
+      if (!member) throw new Error('VocÃª nÃ£o Ã© membro deste grupo.');
+      client.to(`group:${groupId}`).emit('chat:typing', { groupId, userId: user.id, user: { id: user.id, name: user.name, avatar: user.avatar }, isTyping: data.isTyping, occurredAt: new Date().toISOString() });
+    } catch {
+      this.server.to(client.id).emit('chat:error', { code: 'GROUP_TYPING_ERROR', message: 'Não foi possível atualizar a digitação.' });
+    }
+  }
+
   @SubscribeMessage(
     'presence:get',
   )
