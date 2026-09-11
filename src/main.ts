@@ -15,7 +15,16 @@ async function bootstrap() {
   http.use(express.json({ limit: process.env.API_JSON_LIMIT ?? '1mb' }));
   http.use(express.urlencoded({ extended: true, limit: process.env.API_JSON_LIMIT ?? '1mb' }));
   http.use(helmet({ contentSecurityPolicy: false }));
-  if (storageConfig().driver === 'local') http.use('/uploads', express.static(join(process.cwd(), storageConfig().localRoot)));
+  if (storageConfig().driver === 'local') {
+    http.use(
+      '/uploads',
+      express.static(join(process.cwd(), storageConfig().localRoot), {
+        setHeaders(response) {
+          response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        },
+      }),
+    );
+  }
 
   app.enableCors({
     origin: corsOrigins(process.env.CORS_ORIGINS),
