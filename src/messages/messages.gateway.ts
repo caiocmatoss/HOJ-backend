@@ -19,7 +19,7 @@ import { CreateMessageDto } from './dto/create-message.dto';
 import { MessagesService } from './messages.service';
 
 import type { AppSocket } from '../auth/socket/socket.types';
-import { MessageEvents, type MessageLifecycleEvent, type MessageReactionEvent } from '../realtime/message-events';
+import { MessageEvents, type MessageCreatedEvent, type MessageLifecycleEvent, type MessageReactionEvent } from '../realtime/message-events';
 
 type JwtPayload = {
   sub: string;
@@ -33,6 +33,7 @@ type ChatJoinPayload = {
 type MessageSendPayload = {
   groupId: string;
   text: string;
+  replyToId?: string;
 };
 
 @WebSocketGateway({
@@ -92,10 +93,11 @@ export class MessagesGateway implements OnGatewayInit {
     }
   }
 
-  onModuleInit(): void { this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); this.messageEvents.on('message:reaction:updated', this.handleReaction); }
+  onModuleInit(): void { this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); this.messageEvents.on('message:reaction:updated', this.handleReaction); this.messageEvents.on('message:created', this.handleCreated); }
   private readonly handleMessageUpdated = (event: MessageLifecycleEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:updated', event); };
   private readonly handleMessageDeleted = (event: MessageLifecycleEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:deleted', event); };
   private readonly handleReaction = (event: MessageReactionEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:reaction:updated', event); };
+  private readonly handleCreated = (event: MessageCreatedEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:new', event.message); };
   @SubscribeMessage(
     'chat:join',
   )
@@ -386,6 +388,7 @@ export class MessagesGateway implements OnGatewayInit {
       const dto: CreateMessageDto =
         {
           text,
+          replyToId: typeof data.replyToId === 'string' ? data.replyToId : undefined,
         };
 
       const message =
@@ -400,13 +403,6 @@ export class MessagesGateway implements OnGatewayInit {
        * para todos os membros
        * conectados à sala.
        */
-      this.server
-        .to(`group:${groupId}`)
-        .emit(
-          'message:new',
-          message,
-        );
-
       void 0;
 
       /*

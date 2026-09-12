@@ -28,16 +28,26 @@ export class MessagesService {
     return { ...rest, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt };
   }
 
-  private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }): any { return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, user: this.publicUser(message.user) }, summary); }
+  private serializeReply(message: any): any { if (!message) return null; return { id: message.id, userId: message.userId, authorName: this.publicUser(message.user)?.name ?? null, text: message.deletedAt ? null : message.text, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null }; }
+  private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }, replyTo: any = undefined): any { return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, user: this.publicUser(message.user), replyTo: replyTo === undefined ? null : this.serializeReply(replyTo) }, summary); }
 
   async create(userId: string, groupId: string, dto: CreateMessageDto) {
     await this.ensureMember(userId, groupId);
     const text = dto.text.trim();
     if (!text) throw new NotFoundException('A mensagem não pode estar vazia.');
-    const message = await this.prisma.message.create({ data: { groupId, userId, text }, include: { user: { select: PUBLIC_USER_SELECT } } });
+    let replyToId: string | undefined;
+    let replyTarget: any = null;
+    if (dto.replyToId) {
+      const target = await this.prisma.message.findUnique({ where: { id: dto.replyToId }, include: { user: { select: PUBLIC_USER_SELECT } } });
+      if (!target || target.deletedAt || target.groupId !== groupId) throw new NotFoundException('Mensagem citada não encontrada.');
+      replyToId = target.id; replyTarget = target;
+    }
+    const message = await this.prisma.message.create({ data: { groupId, userId, text, replyToId }, include: { user: { select: PUBLIC_USER_SELECT } } });
     const members = await this.prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } });
     await this.notificationsService.createMany(members.filter((member) => member.userId !== userId).map((member) => member.userId), { type: MESSAGE_NOTIFICATION_TYPES.GROUP_MESSAGE, title: 'Nova mensagem no grupo', message: 'Você recebeu uma nova mensagem em um grupo.', referenceId: groupId, referenceType: 'GROUP' });
-    return this.serializeMessage(message);
+    const serialized = this.serializeMessage(message, undefined, replyTarget);
+    this.messageEvents.emitCreated({ message: serialized, groupId });
+    return serialized;
   }
 
   async findAll(userId: string, groupId: string, pagination: Pagination): Promise<PaginatedResult<any>>;
@@ -52,9 +62,12 @@ export class MessagesService {
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     const reactionRows = items.length ? await (this.prisma as any).messageReaction.findMany({ where: { messageId: { in: items.map((message: any) => message.id) } }, select: { messageId: true, userId: true, type: true } }) : [];
+    const replyIds = items.map((message: any) => message.replyToId).filter(Boolean);
+    const replyRows = replyIds.length ? await this.prisma.message.findMany({ where: { id: { in: replyIds } }, select: { id: true, userId: true, text: true, deletedAt: true, user: { select: PUBLIC_USER_SELECT } } }) : [];
+    const repliesById = new Map(replyRows.map((row: any) => [row.id, row]));
     const byMessage = new Map<string, any[]>();
     for (const row of reactionRows) byMessage.set(row.messageId, [...(byMessage.get(row.messageId) ?? []), row]);
-    const mapped = items.map((message: any) => this.serializeMessage(message, summarizeReactions(byMessage.get(message.id) ?? [], userId)));
+    const mapped = items.map((message: any) => this.serializeMessage(message, summarizeReactions(byMessage.get(message.id) ?? [], userId), repliesById.get(message.replyToId)));
     if (!pagination) return mapped;
     const total = await this.prisma.message.count({ where });
     return { items: mapped, total };

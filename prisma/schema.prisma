@@ -318,9 +318,13 @@ model Message {
   group     Group             @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   reactions MessageReaction[]
+  replyToId String?
+  replyTo   Message?          @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[]         @relation("MessageReplies")
 
   @@index([groupId, createdAt])
   @@index([userId])
+  @@index([replyToId])
 }
 
 model MessageReaction {
@@ -352,9 +356,13 @@ model DirectMessage {
   sender    User                    @relation("DirectMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
   receiver  User                    @relation("DirectMessageReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
   reactions DirectMessageReaction[]
+  replyToId String?
+  replyTo   DirectMessage?          @relation("DirectMessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   DirectMessage[]         @relation("DirectMessageReplies")
 
   @@index([senderId, receiverId, createdAt])
   @@index([receiverId, senderId, createdAt])
+  @@index([replyToId])
 }
 
 model DirectMessageReaction {

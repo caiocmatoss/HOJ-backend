@@ -18,7 +18,7 @@ import { DirectMessagesService } from './direct-messages.service';
 
 import type { AppSocket } from '../auth/socket/socket.types';
 import { DirectReadEvents, type DirectReadEvent } from '../realtime/direct-read-events';
-import { MessageEvents, type MessageLifecycleEvent, type MessageReactionEvent } from '../realtime/message-events';
+import { MessageEvents, type MessageCreatedEvent, type MessageLifecycleEvent, type MessageReactionEvent } from '../realtime/message-events';
 
 type ChatErrorData = {
   code?: string;
@@ -37,6 +37,7 @@ type DirectJoinPayload = {
 type DirectSendPayload = {
   receiverId: string;
   text: string;
+  replyToId?: string;
 };
 
 type DirectChatResponse = {
@@ -101,7 +102,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
     }
   }
 
-  onModuleInit(): void { this.directReadEvents.on('direct:read', this.handleDirectRead); this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); this.messageEvents.on('message:reaction:updated', this.handleReaction); }
+  onModuleInit(): void { this.directReadEvents.on('direct:read', this.handleDirectRead); this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); this.messageEvents.on('message:reaction:updated', this.handleReaction); this.messageEvents.on('message:created', this.handleCreated); }
 
   private readonly handleDirectRead = (event: DirectReadEvent): void => {
     this.server?.to(getDirectRoom(event.userId, event.peerUserId)).emit('direct:read', event);
@@ -109,6 +110,7 @@ export class DirectMessagesGateway implements OnGatewayInit {
   private readonly handleMessageUpdated = (event: MessageLifecycleEvent): void => { if (event.senderId && event.receiverId) this.server?.to(getDirectRoom(event.senderId, event.receiverId)).emit('direct:message:updated', event); };
   private readonly handleMessageDeleted = (event: MessageLifecycleEvent): void => { if (event.senderId && event.receiverId) this.server?.to(getDirectRoom(event.senderId, event.receiverId)).emit('direct:message:deleted', event); };
   private readonly handleReaction = (event: MessageReactionEvent): void => { if (event.direct && event.messageId) this.prisma.directMessage.findUnique({ where: { id: event.messageId }, select: { senderId: true, receiverId: true } }).then((message) => { if (message) this.server?.to(getDirectRoom(message.senderId, message.receiverId)).emit('direct:message:reaction:updated', event); }).catch(() => undefined); };
+  private readonly handleCreated = (event: MessageCreatedEvent): void => { if (event.senderId && event.receiverId) this.server?.to(getDirectRoom(event.senderId, event.receiverId)).emit('direct:message:new', event.message); };
   @SubscribeMessage('direct:join')
   async handleJoin(
     @ConnectedSocket()
@@ -444,13 +446,8 @@ export class DirectMessagesGateway implements OnGatewayInit {
           receiverId,
           {
             text,
+            replyToId: typeof data.replyToId === 'string' ? data.replyToId : undefined,
           },
-        );
-
-      const room =
-        getDirectRoom(
-          currentUser.id,
-          receiverId,
         );
 
       /*
@@ -458,13 +455,6 @@ export class DirectMessagesGateway implements OnGatewayInit {
        * todos os sockets que estão
        * dentro da conversa.
        */
-      this.server
-        .to(room)
-        .emit(
-          'direct:message:new',
-          message,
-        );
-
       void 0;
 
       /*

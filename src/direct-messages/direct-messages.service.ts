@@ -31,8 +31,12 @@ export class DirectMessagesService {
     return { ...rest, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt };
   }
 
-  private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }): any {
-    return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, sender: this.publicUser(message.sender), receiver: this.publicUser(message.receiver) }, summary);
+  private serializeReply(message: any): any {
+    if (!message) return null;
+    return { id: message.id, senderId: message.senderId, authorName: this.publicUser(message.sender)?.name ?? null, text: message.deletedAt ? null : message.text, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null };
+  }
+  private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }, replyTo: any = undefined): any {
+    return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, sender: this.publicUser(message.sender), receiver: this.publicUser(message.receiver), replyTo: replyTo === undefined ? null : this.serializeReply(replyTo) }, summary);
   }
 
   async create(senderId: string, receiverId: string, dto: SendDirectMessageDto) {
@@ -40,9 +44,18 @@ export class DirectMessagesService {
     const text = dto.text.trim();
     if (!text) throw new NotFoundException('A mensagem não pode estar vazia.');
     if (text.length > 2000) throw new NotFoundException('A mensagem não pode ter mais de 2000 caracteres.');
-    const message = await this.prisma.directMessage.create({ data: { senderId, receiverId, text }, include: { sender: { select: PUBLIC_USER_SELECT }, receiver: { select: PUBLIC_USER_SELECT } } });
+    let replyToId: string | undefined;
+    let replyTarget: any = null;
+    if (dto.replyToId) {
+      const target = await this.prisma.directMessage.findUnique({ where: { id: dto.replyToId }, include: { sender: { select: PUBLIC_USER_SELECT } } });
+      if (!target || target.deletedAt || !((target.senderId === senderId && target.receiverId === receiverId) || (target.senderId === receiverId && target.receiverId === senderId))) throw new NotFoundException('Mensagem citada não encontrada.');
+      replyToId = target.id; replyTarget = target;
+    }
+    const message = await this.prisma.directMessage.create({ data: { senderId, receiverId, text, replyToId }, include: { sender: { select: PUBLIC_USER_SELECT }, receiver: { select: PUBLIC_USER_SELECT } } });
     await this.notificationsService.create(receiverId, { type: MESSAGE_NOTIFICATION_TYPES.DIRECT_MESSAGE, title: 'Nova mensagem', message: 'Você recebeu uma nova mensagem.', referenceId: senderId, referenceType: 'USER' });
-    return this.serializeMessage(message);
+    const serialized = this.serializeMessage(message, undefined, replyTarget);
+    this.messageEvents.emitCreated({ message: serialized, senderId, receiverId });
+    return serialized;
   }
 
   async findConversation(userId: string, otherUserId: string, pagination: Pagination): Promise<PaginatedResult<any>>;
@@ -55,9 +68,12 @@ export class DirectMessagesService {
       this.prisma.directMessage.count({ where }),
     ]);
     const reactionRows = items.length ? await (this.prisma as any).directMessageReaction.findMany({ where: { directMessageId: { in: items.map((message: any) => message.id) } }, select: { directMessageId: true, userId: true, type: true } }) : [];
+    const replyIds = items.map((message: any) => message.replyToId).filter(Boolean);
+    const replyRows = replyIds.length ? await this.prisma.directMessage.findMany({ where: { id: { in: replyIds } }, select: { id: true, senderId: true, text: true, deletedAt: true, sender: { select: PUBLIC_USER_SELECT } } }) : [];
+    const repliesById = new Map(replyRows.map((row: any) => [row.id, row]));
     const byMessage = new Map<string, any[]>();
     for (const row of reactionRows) byMessage.set(row.directMessageId, [...(byMessage.get(row.directMessageId) ?? []), row]);
-    const mapped = items.map((message: any) => this.serializeMessage(message, summarizeReactions(byMessage.get(message.id) ?? [], userId)));
+    const mapped = items.map((message: any) => this.serializeMessage(message, summarizeReactions(byMessage.get(message.id) ?? [], userId), repliesById.get(message.replyToId)));
     if (!pagination) return mapped;
     return { items: mapped, total };
   }

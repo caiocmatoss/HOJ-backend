@@ -40,6 +40,26 @@ describe('REST messaging pagination contracts', () => {
     expect(prisma.messageReaction.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { messageId: { in: ['m1', 'm2', 'm3'] } } }));
   });
 
+  it('hydrates all Direct reply targets with one batched query', async () => {
+    const items = ['d1', 'd2', 'd3'].map((id, i) => ({ id, senderId: 'u', receiverId: 'v', text: id, replyToId: `q${i}`, createdAt: new Date(), sender: user('u'), receiver: user('v') }));
+    const findMany = jest.fn().mockResolvedValueOnce(items).mockResolvedValueOnce(items.map((item) => ({ id: item.replyToId, senderId: 'v', text: 'quote', deletedAt: null, sender: user('v') })));
+    const prisma: any = { user: { findUnique: jest.fn().mockResolvedValue({ id: 'u', privacyPreferences: null }) }, directMessage: { findMany, count: jest.fn().mockResolvedValue(items.length) }, directMessageReaction: { findMany: jest.fn().mockResolvedValue([]) } };
+    const result = await new DirectMessagesService(prisma).findConversation('u', 'v', pagination);
+    expect(findMany).toHaveBeenCalledTimes(2);
+    expect(findMany.mock.calls[1][0]).toEqual(expect.objectContaining({ where: { id: { in: ['q0', 'q1', 'q2'] } } }));
+    expect(result.items.every((item: any) => item.replyTo?.text === 'quote')).toBe(true);
+  });
+
+  it('hydrates all Group reply targets with one batched query', async () => {
+    const items = ['m1', 'm2', 'm3'].map((id, i) => ({ id, groupId: 'g', userId: 'u', text: id, replyToId: `q${i}`, createdAt: new Date(), user: user('u') }));
+    const findMany = jest.fn().mockResolvedValueOnce(items).mockResolvedValueOnce(items.map((item) => ({ id: item.replyToId, userId: 'u', text: 'quote', deletedAt: null, user: user('u') })));
+    const prisma: any = { group: { findUnique: jest.fn().mockResolvedValue({ id: 'g' }) }, groupMember: { findUnique: jest.fn().mockResolvedValue({}) }, message: { findMany, count: jest.fn().mockResolvedValue(items.length) }, messageReaction: { findMany: jest.fn().mockResolvedValue([]) } };
+    const result = await new MessagesService(prisma).findAll('u', 'g', pagination);
+    expect(findMany).toHaveBeenCalledTimes(2);
+    expect(findMany.mock.calls[1][0]).toEqual(expect.objectContaining({ where: { id: { in: ['q0', 'q1', 'q2'] } } }));
+    expect(result.items.every((item: any) => item.replyTo?.text === 'quote')).toBe(true);
+  });
+
   it('paginates sent invites with public user projections', async () => {
     const prisma: any = { invite: { findMany: jest.fn().mockResolvedValue([{ sender: { id: 'u' }, receiver: { id: 'v' } }]), count: jest.fn().mockResolvedValue(1) } };
     const result = await new InvitesService(prisma, {} as any).findSent('u', pagination);

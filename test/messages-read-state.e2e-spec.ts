@@ -13,6 +13,25 @@ function waitForSocketEvent<T>(socket: Socket, event: string, label: string, tim
   });
 }
 
+async function waitForEventAndCount<T extends { id?: string }>(
+  socket: Socket,
+  event: string,
+  label: string,
+  action: () => Promise<string>,
+): Promise<{ id: string; events: T[] }> {
+  const events: T[] = [];
+  const first = new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => { socket.off(event, onEvent); reject(new Error(`Timed out waiting for ${label}`)); }, 2000);
+    const onEvent = (payload: T) => { events.push(payload); clearTimeout(timer); resolve(payload); };
+    socket.on(event, onEvent);
+  });
+  const id = await action();
+  await first;
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  socket.removeAllListeners(event);
+  return { id, events: events.filter((payload) => payload.id === id) };
+}
+
 describe('Messaging inbox and read state (integration)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -313,5 +332,114 @@ describe('Messaging inbox and read state (integration)', () => {
       await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${c.token}`).send({ type: 'LIKE' }).expect(404);
       await expect(failed).rejects.toThrow('Timed out waiting');
     } finally { await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); }))); }
+  });
+
+  it('persists Direct replies, enforces same-thread targets and sanitizes deleted quotes', async () => {
+    await prisma.friendship.create({ data: { requesterId: a.id, addresseeId: c.id, status: 'ACCEPTED' } });
+    const original = await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'original quote' }).expect(201);
+    const reply = await request(app.getHttpServer()).post(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'direct reply', replyToId: original.body.id }).expect(201);
+    expect(reply.body.replyTo).toMatchObject({ id: original.body.id, text: 'original quote' });
+    expect(reply.body.replyTo.replyTo).toBeUndefined();
+    const cross = await request(app.getHttpServer()).post(`/direct-messages/${c.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'other thread' }).expect(201);
+    await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'invalid target', replyToId: cross.body.id }).expect(404);
+    const editedReply = await request(app.getHttpServer()).patch(`/direct-messages/messages/${reply.body.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'edited reply' }).expect(200);
+    expect((await prisma.directMessage.findUnique({ where: { id: reply.body.id } }))?.replyToId).toBe(original.body.id);
+    await request(app.getHttpServer()).patch(`/direct-messages/messages/${original.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'edited quote' }).expect(200);
+    const refreshed = await request(app.getHttpServer()).get(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    expect(refreshed.body.find((item: any) => item.id === reply.body.id).replyTo.text).toBe('edited quote');
+    await request(app.getHttpServer()).put(`/direct-messages/messages/${reply.body.id}/reaction`).set('Authorization', `Bearer ${b.token}`).send({ type: 'LOVE' }).expect(200);
+    const reactedReply = (await request(app.getHttpServer()).get(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).expect(200)).body.find((item: any) => item.id === reply.body.id);
+    expect(reactedReply.reactions).toEqual([{ type: 'LOVE', count: 1 }]);
+    await request(app.getHttpServer()).delete(`/direct-messages/messages/${original.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    const sanitized = (await request(app.getHttpServer()).get(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).expect(200)).body.find((item: any) => item.id === reply.body.id);
+    expect(sanitized.replyTo).toMatchObject({ id: original.body.id, text: null });
+    expect(JSON.stringify(sanitized)).not.toContain('edited quote');
+    await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'reply deleted target', replyToId: original.body.id }).expect(404);
+    expect(editedReply.body.text).toBe('edited reply');
+  });
+
+  it('persists Group replies, enforces group scope and serializes depth one', async () => {
+    const otherGroup = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${a.token}`).send({ name: `Other Reply Group ${Date.now()}`, venueId }).expect(201);
+    const original = await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${b.token}`).send({ text: 'group original' }).expect(201);
+    const reply = await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'group reply', replyToId: original.body.id }).expect(201);
+    const nested = await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${b.token}`).send({ text: 'nested reply', replyToId: reply.body.id }).expect(201);
+    expect(nested.body.replyTo).toMatchObject({ id: reply.body.id, text: 'group reply' });
+    expect(nested.body.replyTo.replyTo).toBeUndefined();
+    const otherOriginal = await request(app.getHttpServer()).post(`/groups/${otherGroup.body.id}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'other group' }).expect(201);
+    await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'cross group', replyToId: otherOriginal.body.id }).expect(404);
+    await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${c.token}`).send({ text: 'non member', replyToId: original.body.id }).expect(404);
+    await request(app.getHttpServer()).patch(`/groups/${groupId}/messages/${original.body.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'group edited quote' }).expect(200);
+    const refreshed = await request(app.getHttpServer()).get(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(refreshed.body.find((item: any) => item.id === reply.body.id).replyTo.text).toBe('group edited quote');
+    await request(app.getHttpServer()).delete(`/groups/${groupId}/messages/${original.body.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    const sanitized = (await request(app.getHttpServer()).get(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).expect(200)).body.find((item: any) => item.id === reply.body.id);
+    expect(sanitized.replyTo).toMatchObject({ id: original.body.id, text: null });
+    await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'deleted target', replyToId: original.body.id }).expect(404);
+    await request(app.getHttpServer()).delete(`/groups/${otherGroup.body.id}/messages/${otherOriginal.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    await request(app.getHttpServer()).delete(`/groups/${otherGroup.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+  });
+
+  it('emits Direct and Group reply payloads with one-level quote over real sockets', async () => {
+    const sockets: Socket[] = [];
+    const connect = (token: string) => new Promise<Socket>((resolve, reject) => { const socket = io(baseUrl, { transports: ['websocket'], auth: { token } }); sockets.push(socket); const timer = setTimeout(() => { socket.close(); reject(new Error('reply socket connection timeout')); }, 2000); socket.once('connect', () => { clearTimeout(timer); resolve(socket); }); socket.once('connect_error', reject); });
+    try {
+      const [socketA, socketB] = await Promise.all([connect(a.token), connect(b.token)]);
+      const joinedA = waitForSocketEvent(socketA, 'direct:chat:joined', 'reply direct join A'); socketA.emit('direct:join', { userId: b.id }); await joinedA;
+      const joinedB = waitForSocketEvent(socketB, 'direct:chat:joined', 'reply direct join B'); socketB.emit('direct:join', { userId: a.id }); await joinedB;
+      const original = await request(app.getHttpServer()).post(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'socket target' }).expect(201);
+      const replyEvent = waitForSocketEvent<any>(socketB, 'direct:message:new', 'direct reply new');
+      await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'socket reply', replyToId: original.body.id }).expect(201);
+      await expect(replyEvent).resolves.toMatchObject({ text: 'socket reply', replyTo: { id: original.body.id, text: 'socket target' } });
+      socketA.emit('chat:join', { groupId }); socketB.emit('chat:join', { groupId }); await new Promise((resolve) => setTimeout(resolve, 100));
+      const groupOriginal = await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${b.token}`).send({ text: 'socket group target' }).expect(201);
+      const groupReplyEvent = waitForSocketEvent<any>(socketB, 'message:new', 'group reply new');
+      await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'socket group reply', replyToId: groupOriginal.body.id }).expect(201);
+      await expect(groupReplyEvent).resolves.toMatchObject({ text: 'socket group reply', replyTo: { id: groupOriginal.body.id, text: 'socket group target' } });
+    } finally { await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); }))); }
+  });
+
+  it('publishes exactly one create event for REST and socket Direct messages', async () => {
+    const sockets: Socket[] = [];
+    const connect = (token: string) => new Promise<Socket>((resolve, reject) => {
+      const socket = io(baseUrl, { transports: ['websocket'], auth: { token } });
+      sockets.push(socket);
+      const timer = setTimeout(() => { socket.close(); reject(new Error('create socket connection timeout')); }, 2000);
+      socket.once('connect', () => { clearTimeout(timer); resolve(socket); });
+      socket.once('connect_error', reject);
+    });
+    try {
+      const [socketA, socketB] = await Promise.all([connect(a.token), connect(b.token)]);
+      const joinedA = waitForSocketEvent(socketA, 'direct:chat:joined', 'create direct join A');
+      socketA.emit('direct:join', { userId: b.id });
+      await joinedA;
+      const joinedB = waitForSocketEvent(socketB, 'direct:chat:joined', 'create direct join B');
+      socketB.emit('direct:join', { userId: a.id });
+      await joinedB;
+
+      const restResult = await waitForEventAndCount<any>(socketB, 'direct:message:new', 'REST direct create', async () => {
+        const response = await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'REST exactly once' }).expect(201);
+        return response.body.id as string;
+      });
+      expect(restResult.events).toHaveLength(1);
+      expect(restResult.events[0]).toMatchObject({ text: 'REST exactly once' });
+
+      const socketResult = await waitForEventAndCount<any>(socketB, 'direct:message:new', 'Socket direct create', async () => {
+        const sent = waitForSocketEvent<any>(socketA, 'direct:message:sent', 'socket send acknowledgement');
+        socketA.emit('direct:message:send', { receiverId: b.id, text: 'Socket exactly once' });
+        const response = await sent;
+        return response.id as string;
+      });
+      expect(socketResult.events).toHaveLength(1);
+      expect(socketResult.events[0]).toMatchObject({ id: socketResult.id, text: 'Socket exactly once' });
+    } finally {
+      await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => {
+        socket.removeAllListeners();
+        if (!socket.connected) { socket.close(); resolve(); return; }
+        socket.once('disconnect', () => resolve());
+        socket.disconnect();
+        socket.close();
+        setTimeout(resolve, 250);
+      })));
+    }
   });
 });
