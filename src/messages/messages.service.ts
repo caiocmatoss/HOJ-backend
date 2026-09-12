@@ -6,10 +6,11 @@ import { CreateMessageDto } from './dto/create-message.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MESSAGE_NOTIFICATION_TYPES } from '../notifications/notification-types';
 import { Prisma } from '../../generated/prisma/client';
+import { MessageEvents, type MessageLifecycleEvent } from '../realtime/message-events';
 
 @Injectable()
 export class MessagesService {
-  constructor(private readonly prisma: PrismaService, private readonly notificationsService: NotificationsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly notificationsService: NotificationsService, private readonly messageEvents: MessageEvents = new MessageEvents()) {}
 
   private async ensureMember(userId: string, groupId: string) {
     const group = await this.prisma.group.findUnique({ where: { id: groupId } });
@@ -26,6 +27,8 @@ export class MessagesService {
     return { ...rest, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt };
   }
 
+  private serializeMessage(message: any): any { return { ...message, text: message.deletedAt ? null : message.text, user: this.publicUser(message.user) }; }
+
   async create(userId: string, groupId: string, dto: CreateMessageDto) {
     await this.ensureMember(userId, groupId);
     const text = dto.text.trim();
@@ -33,7 +36,7 @@ export class MessagesService {
     const message = await this.prisma.message.create({ data: { groupId, userId, text }, include: { user: { select: PUBLIC_USER_SELECT } } });
     const members = await this.prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } });
     await this.notificationsService.createMany(members.filter((member) => member.userId !== userId).map((member) => member.userId), { type: MESSAGE_NOTIFICATION_TYPES.GROUP_MESSAGE, title: 'Nova mensagem no grupo', message: 'Você recebeu uma nova mensagem em um grupo.', referenceId: groupId, referenceType: 'GROUP' });
-    return { ...message, user: this.publicUser(message.user) };
+    return this.serializeMessage(message);
   }
 
   async findAll(userId: string, groupId: string, pagination: Pagination): Promise<PaginatedResult<any>>;
@@ -47,7 +50,7 @@ export class MessagesService {
       include: { user: { select: PUBLIC_USER_SELECT } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    const mapped = items.map((message: any) => ({ ...message, user: this.publicUser(message.user) }));
+    const mapped = items.map((message: any) => this.serializeMessage(message));
     if (!pagination) return mapped;
     const total = await this.prisma.message.count({ where });
     return { items: mapped, total };
@@ -64,26 +67,26 @@ export class MessagesService {
     type InboxRow = { threadType: 'DIRECT' | 'GROUP'; threadKey: string; peerUserId: string | null; groupId: string | null; title: string; avatar: string | null; lastMessageId: string; lastMessageText: string; lastMessageCreatedAt: Date; lastSenderId: string; unreadCount: bigint; totalCount: bigint };
     const rows = await this.prisma.$queryRaw<InboxRow[]>(Prisma.sql`
       WITH direct_base AS (
-        SELECT CASE WHEN dm."senderId" = ${userId} THEN dm."receiverId" ELSE dm."senderId" END AS peer_id, dm.id, dm.text, dm."createdAt", dm."senderId", dm."receiverId"
+        SELECT CASE WHEN dm."senderId" = ${userId} THEN dm."receiverId" ELSE dm."senderId" END AS peer_id, dm.id, dm.text, dm."createdAt", dm."senderId", dm."receiverId", dm."deletedAt"
         FROM "DirectMessage" dm
         JOIN "Friendship" f ON f.status = 'ACCEPTED' AND ((f."requesterId" = ${userId} AND f."addresseeId" = CASE WHEN dm."senderId" = ${userId} THEN dm."receiverId" ELSE dm."senderId" END) OR (f."addresseeId" = ${userId} AND f."requesterId" = CASE WHEN dm."senderId" = ${userId} THEN dm."receiverId" ELSE dm."senderId" END))
         WHERE dm."senderId" = ${userId} OR dm."receiverId" = ${userId}
       ), direct_latest AS (
-        SELECT DISTINCT ON (peer_id) peer_id, id, text, "createdAt", "senderId" FROM direct_base ORDER BY peer_id, "createdAt" DESC, id DESC
+        SELECT DISTINCT ON (peer_id) peer_id, id, text, "createdAt", "senderId", "deletedAt" FROM direct_base ORDER BY peer_id, "createdAt" DESC, id DESC
       ), direct_unread AS (
         SELECT b.peer_id, COUNT(*)::bigint AS unread_count FROM direct_base b LEFT JOIN "MessageReadState" rs ON rs."userId" = ${userId} AND rs."threadType" = 'DIRECT' AND rs."threadKey" = b.peer_id
-        WHERE b."receiverId" = ${userId} AND (rs."lastReadAt" IS NULL OR b."createdAt" > rs."lastReadAt" OR (b."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR b.id > rs."lastReadMessageId"))) GROUP BY b.peer_id
+        WHERE b."receiverId" = ${userId} AND b."deletedAt" IS NULL AND (rs."lastReadAt" IS NULL OR b."createdAt" > rs."lastReadAt" OR (b."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR b.id > rs."lastReadMessageId"))) GROUP BY b.peer_id
       ), group_base AS (
-        SELECT m."groupId" AS group_id, m.id, m.text, m."createdAt", m."userId", gm."joinedAt", g.name FROM "Message" m JOIN "GroupMember" gm ON gm."groupId" = m."groupId" AND gm."userId" = ${userId} JOIN "Group" g ON g.id = m."groupId"
+        SELECT m."groupId" AS group_id, m.id, m.text, m."createdAt", m."userId", gm."joinedAt", g.name, m."deletedAt" FROM "Message" m JOIN "GroupMember" gm ON gm."groupId" = m."groupId" AND gm."userId" = ${userId} JOIN "Group" g ON g.id = m."groupId"
       ), group_latest AS (
-        SELECT DISTINCT ON (group_id) group_id, id, text, "createdAt", "userId", name FROM group_base ORDER BY group_id, "createdAt" DESC, id DESC
+        SELECT DISTINCT ON (group_id) group_id, id, text, "createdAt", "userId", name, "deletedAt" FROM group_base ORDER BY group_id, "createdAt" DESC, id DESC
       ), group_unread AS (
         SELECT b.group_id, COUNT(*)::bigint AS unread_count FROM group_base b LEFT JOIN "MessageReadState" rs ON rs."userId" = ${userId} AND rs."threadType" = 'GROUP' AND rs."threadKey" = b.group_id
-        WHERE b."userId" <> ${userId} AND b."createdAt" >= b."joinedAt" AND (rs."lastReadAt" IS NULL OR b."createdAt" > rs."lastReadAt" OR (b."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR b.id > rs."lastReadMessageId"))) GROUP BY b.group_id
+        WHERE b."userId" <> ${userId} AND b."deletedAt" IS NULL AND b."createdAt" >= b."joinedAt" AND (rs."lastReadAt" IS NULL OR b."createdAt" > rs."lastReadAt" OR (b."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR b.id > rs."lastReadMessageId"))) GROUP BY b.group_id
       ), threads AS (
-        SELECT 'DIRECT'::text AS "threadType", l.peer_id AS "threadKey", l.peer_id AS "peerUserId", NULL::text AS "groupId", u.name AS title, u.avatar, l.id AS "lastMessageId", l.text AS "lastMessageText", l."createdAt" AS "lastMessageCreatedAt", l."senderId" AS "lastSenderId", COALESCE(un.unread_count, 0)::bigint AS "unreadCount" FROM direct_latest l JOIN "User" u ON u.id = l.peer_id LEFT JOIN direct_unread un ON un.peer_id = l.peer_id
+        SELECT 'DIRECT'::text AS "threadType", l.peer_id AS "threadKey", l.peer_id AS "peerUserId", NULL::text AS "groupId", u.name AS title, u.avatar, l.id AS "lastMessageId", CASE WHEN l."deletedAt" IS NULL THEN l.text ELSE 'Mensagem excluída' END AS "lastMessageText", l."createdAt" AS "lastMessageCreatedAt", l."senderId" AS "lastSenderId", COALESCE(un.unread_count, 0)::bigint AS "unreadCount" FROM direct_latest l JOIN "User" u ON u.id = l.peer_id LEFT JOIN direct_unread un ON un.peer_id = l.peer_id
         UNION ALL
-        SELECT 'GROUP'::text, l.group_id, NULL::text, l.group_id, l.name, NULL::text, l.id, l.text, l."createdAt", l."userId", COALESCE(un.unread_count, 0)::bigint FROM group_latest l LEFT JOIN group_unread un ON un.group_id = l.group_id
+        SELECT 'GROUP'::text, l.group_id, NULL::text, l.group_id, l.name, NULL::text, l.id, CASE WHEN l."deletedAt" IS NULL THEN l.text ELSE 'Mensagem excluída' END, l."createdAt", l."userId", COALESCE(un.unread_count, 0)::bigint FROM group_latest l LEFT JOIN group_unread un ON un.group_id = l.group_id
       )
       SELECT *, COUNT(*) OVER()::bigint AS "totalCount" FROM threads ORDER BY "lastMessageCreatedAt" DESC, "lastMessageId" DESC OFFSET ${pagination.skip} LIMIT ${pagination.take}
     `);
@@ -100,7 +103,7 @@ export class MessagesService {
   }
 
   async unreadCount(userId: string): Promise<{ count: number }> {
-    const [row] = await this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`SELECT (SELECT COUNT(*) FROM "DirectMessage" dm JOIN "Friendship" f ON f.status = 'ACCEPTED' AND ((f."requesterId" = ${userId} AND f."addresseeId" = dm."senderId") OR (f."addresseeId" = ${userId} AND f."requesterId" = dm."senderId")) LEFT JOIN "MessageReadState" rs ON rs."userId" = ${userId} AND rs."threadType" = 'DIRECT' AND rs."threadKey" = dm."senderId" WHERE dm."receiverId" = ${userId} AND (rs."lastReadAt" IS NULL OR dm."createdAt" > rs."lastReadAt" OR (dm."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR dm.id > rs."lastReadMessageId")))) + (SELECT COUNT(*) FROM "Message" m JOIN "GroupMember" gm ON gm."groupId" = m."groupId" AND gm."userId" = ${userId} LEFT JOIN "MessageReadState" rs ON rs."userId" = ${userId} AND rs."threadType" = 'GROUP' AND rs."threadKey" = m."groupId" WHERE m."userId" <> ${userId} AND m."createdAt" >= gm."joinedAt" AND (rs."lastReadAt" IS NULL OR m."createdAt" > rs."lastReadAt" OR (m."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR m.id > rs."lastReadMessageId")))) AS count`);
+    const [row] = await this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`SELECT (SELECT COUNT(*) FROM "DirectMessage" dm JOIN "Friendship" f ON f.status = 'ACCEPTED' AND ((f."requesterId" = ${userId} AND f."addresseeId" = dm."senderId") OR (f."addresseeId" = ${userId} AND f."requesterId" = dm."senderId")) LEFT JOIN "MessageReadState" rs ON rs."userId" = ${userId} AND rs."threadType" = 'DIRECT' AND rs."threadKey" = dm."senderId" WHERE dm."receiverId" = ${userId} AND dm."deletedAt" IS NULL AND (rs."lastReadAt" IS NULL OR dm."createdAt" > rs."lastReadAt" OR (dm."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR dm.id > rs."lastReadMessageId")))) + (SELECT COUNT(*) FROM "Message" m JOIN "GroupMember" gm ON gm."groupId" = m."groupId" AND gm."userId" = ${userId} LEFT JOIN "MessageReadState" rs ON rs."userId" = ${userId} AND rs."threadType" = 'GROUP' AND rs."threadKey" = m."groupId" WHERE m."userId" <> ${userId} AND m."deletedAt" IS NULL AND m."createdAt" >= gm."joinedAt" AND (rs."lastReadAt" IS NULL OR m."createdAt" > rs."lastReadAt" OR (m."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR m.id > rs."lastReadMessageId")))) AS count`);
     return { count: Number(row?.count ?? 0) };
   }
 
@@ -131,4 +134,29 @@ export class MessagesService {
     if (existing?.lastReadAt && (existing.lastReadAt > target.createdAt || (existing.lastReadAt.getTime() === target.createdAt.getTime() && existing.lastReadMessageId && existing.lastReadMessageId >= target.id))) return existing;
     return this.prisma.messageReadState.upsert({ where: { userId_threadType_threadKey: { userId, threadType, threadKey } }, create: { userId, threadType, threadKey, lastReadAt: target.createdAt, lastReadMessageId: target.id }, update: { lastReadAt: target.createdAt, lastReadMessageId: target.id } });
   }
+
+  async edit(userId: string, groupId: string, messageId: string, text: string) {
+    await this.ensureMember(userId, groupId);
+    const existing = await this.prisma.message.findUnique({ where: { id: messageId }, include: { user: { select: PUBLIC_USER_SELECT } } });
+    if (!existing || existing.groupId !== groupId || existing.userId !== userId) throw new NotFoundException('Mensagem não encontrada.');
+    if (existing.deletedAt) throw new NotFoundException('Mensagem excluída não pode ser editada.');
+    const nextText = text.trim();
+    if (!nextText || nextText.length > 2000) throw new BadRequestException('Texto de mensagem inválido.');
+    const message = nextText === existing.text ? existing : await this.prisma.message.update({ where: { id: messageId }, data: { text: nextText, editedAt: new Date() }, include: { user: { select: PUBLIC_USER_SELECT } } });
+    const serialized = this.serializeMessage(message);
+    if (message !== existing) this.messageEvents.emitUpdated(this.lifecycle(serialized));
+    return serialized;
+  }
+
+  async delete(userId: string, groupId: string, messageId: string) {
+    await this.ensureMember(userId, groupId);
+    const existing = await this.prisma.message.findUnique({ where: { id: messageId }, include: { user: { select: PUBLIC_USER_SELECT } } });
+    if (!existing || existing.groupId !== groupId || existing.userId !== userId) throw new NotFoundException('Mensagem não encontrada.');
+    const message = existing.deletedAt ? existing : await this.prisma.message.update({ where: { id: messageId }, data: { deletedAt: new Date() }, include: { user: { select: PUBLIC_USER_SELECT } } });
+    const serialized = this.serializeMessage(message);
+    if (!existing.deletedAt) this.messageEvents.emitDeleted(this.lifecycle(serialized));
+    return serialized;
+  }
+
+  private lifecycle(message: any): MessageLifecycleEvent { return { id: message.id, groupId: message.groupId, userId: message.userId, text: message.text ?? null, createdAt: new Date(message.createdAt).toISOString(), updatedAt: message.updatedAt ? new Date(message.updatedAt).toISOString() : undefined, editedAt: message.editedAt ? new Date(message.editedAt).toISOString() : null, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null }; }
 }

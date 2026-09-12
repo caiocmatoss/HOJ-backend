@@ -114,6 +114,12 @@ describe('Messaging inbox and read state (integration)', () => {
     await request(app.getHttpServer()).post('/messages/read').set('Authorization', `Bearer ${a.token}`).send({ threadType: 'DIRECT', threadKey: b.id, messageId: oldest.id }).expect(201);
     const state = await prisma.messageReadState.findUnique({ where: { userId_threadType_threadKey: { userId: a.id, threadType: 'DIRECT', threadKey: b.id } } });
     expect(state?.lastReadMessageId).toBe(newest.id);
+    await request(app.getHttpServer()).patch(`/direct-messages/messages/${newest.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'same edited' }).expect(200);
+    await request(app.getHttpServer()).delete(`/direct-messages/messages/${newest.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    const afterLifecycle = await request(app.getHttpServer()).get('/messages/inbox?limit=10').set('Authorization', `Bearer ${a.token}`).expect(200);
+    const afterLifecycleDirect = afterLifecycle.body.find((item: any) => item.threadType === 'DIRECT' && item.peerUserId === b.id);
+    expect(afterLifecycleDirect.lastMessage.id).toBe(newest.id);
+    expect(afterLifecycleDirect.lastMessage.text).toBe('Mensagem excluída');
   });
 
   it('keeps unread total numeric and supports page 1/page 2 without duplication', async () => {
@@ -137,6 +143,62 @@ describe('Messaging inbox and read state (integration)', () => {
     expect(response.body.threadType).toBe('DIRECT');
   });
 
+  it('edits and soft-deletes a direct message without leaking content', async () => {
+    const created = await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'before edit' }).expect(201);
+    const before = await prisma.directMessage.findUnique({ where: { id: created.body.id } });
+    const edited = await request(app.getHttpServer()).patch(`/direct-messages/messages/${created.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'after edit' }).expect(200);
+    expect(edited.body.text).toBe('after edit');
+    expect(edited.body.editedAt).toBeTruthy();
+    const afterEdit = await prisma.directMessage.findUnique({ where: { id: created.body.id } });
+    expect(afterEdit?.editedAt).toBeTruthy();
+    expect(afterEdit?.createdAt.toISOString()).toBe(before?.createdAt.toISOString());
+    await request(app.getHttpServer()).patch(`/direct-messages/messages/${created.body.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'hijack' }).expect(404);
+    const deleted = await request(app.getHttpServer()).delete(`/direct-messages/messages/${created.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(deleted.body.text).toBeNull();
+    expect(deleted.body.deletedAt).toBeTruthy();
+    expect((await prisma.directMessage.findUnique({ where: { id: created.body.id } }))?.deletedAt).toBeTruthy();
+    const history = await request(app.getHttpServer()).get(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    const hidden = history.body.find((message: any) => message.id === created.body.id);
+    expect(hidden.text).toBeNull();
+    expect(JSON.stringify(history.body)).not.toContain('after edit');
+    await request(app.getHttpServer()).delete(`/direct-messages/messages/${created.body.id}`).set('Authorization', `Bearer ${b.token}`).expect(404);
+    await request(app.getHttpServer()).delete(`/direct-messages/messages/${created.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    await request(app.getHttpServer()).patch(`/direct-messages/messages/${created.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'again' }).expect(404);
+  });
+
+  it('edits and soft-deletes a group message with server-side ownership', async () => {
+    const created = await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'group before' }).expect(201);
+    const edited = await request(app.getHttpServer()).patch(`/groups/${groupId}/messages/${created.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'group after' }).expect(200);
+    expect(edited.body.text).toBe('group after');
+    expect(edited.body.editedAt).toBeTruthy();
+    const afterEdit = await prisma.message.findUnique({ where: { id: created.body.id } });
+    expect(afterEdit?.editedAt).toBeTruthy();
+    expect(afterEdit?.createdAt.toISOString()).toBe(new Date(created.body.createdAt).toISOString());
+    await request(app.getHttpServer()).patch(`/groups/${groupId}/messages/${created.body.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'hijack' }).expect(404);
+    const deleted = await request(app.getHttpServer()).delete(`/groups/${groupId}/messages/${created.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(deleted.body.text).toBeNull();
+    expect((await prisma.message.findUnique({ where: { id: created.body.id } }))?.deletedAt).toBeTruthy();
+    const history = await request(app.getHttpServer()).get(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    const hidden = history.body.find((message: any) => message.id === created.body.id);
+    expect(hidden.text).toBeNull();
+    expect(JSON.stringify(history.body)).not.toContain('group after');
+    await request(app.getHttpServer()).delete(`/groups/${groupId}/messages/${created.body.id}`).set('Authorization', `Bearer ${b.token}`).expect(404);
+  });
+
+  it('excludes a deleted unread direct message and keeps a safe inbox preview', async () => {
+    const created = await request(app.getHttpServer()).post(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'delete unread' }).expect(201);
+    const before = await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(before.body.count).toBeGreaterThan(0);
+    await request(app.getHttpServer()).delete(`/direct-messages/messages/${created.body.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    const after = await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(after.body.count).toBeLessThan(before.body.count);
+    const inbox = await request(app.getHttpServer()).get('/messages/inbox?limit=10').set('Authorization', `Bearer ${a.token}`).expect(200);
+    const direct = inbox.body.find((item: any) => item.threadType === 'DIRECT' && item.peerUserId === b.id);
+    expect(direct.lastMessage.id).toBe(created.body.id);
+    expect(direct.lastMessage.text).toBe('Mensagem excluída');
+    expect(JSON.stringify(direct)).not.toContain('delete unread');
+  });
+
   it('delivers authenticated direct typing and read events without sender identity from payload', async () => {
     const sockets: Socket[] = [];
     const connect = (token: string, label: string) => new Promise<Socket>((resolve, reject) => { const socket = io(baseUrl, { transports: ['websocket'], auth: { token } }); sockets.push(socket); const timer = setTimeout(() => { socket.close(); reject(new Error(`Timed out waiting for ${label} connection`)); }, 2000); socket.once('connect', () => { clearTimeout(timer); resolve(socket); }); socket.once('connect_error', (error) => { clearTimeout(timer); reject(error); }); });
@@ -147,6 +209,14 @@ describe('Messaging inbox and read state (integration)', () => {
       const typing = waitForSocketEvent<any>(socketB, 'direct:typing', 'direct:typing on socketB');
       socketA.emit('direct:typing', { peerUserId: b.id, isTyping: true });
       await expect(typing).resolves.toMatchObject({ userId: a.id, isTyping: true });
+      const owned = await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'socket lifecycle' }).expect(201);
+      const updated = waitForSocketEvent<any>(socketB, 'direct:message:updated', 'direct:message:updated on socketB');
+      await request(app.getHttpServer()).patch(`/direct-messages/messages/${owned.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'socket edited' }).expect(200);
+      await expect(updated).resolves.toMatchObject({ id: owned.body.id, editedAt: expect.any(String), text: 'socket edited' });
+      const deleted = waitForSocketEvent<any>(socketB, 'direct:message:deleted', 'direct:message:deleted on socketB');
+      await request(app.getHttpServer()).delete(`/direct-messages/messages/${owned.body.id}`).set('Authorization', `Bearer ${a.token}`).send().expect(200);
+      await expect(deleted).resolves.toMatchObject({ id: owned.body.id, deletedAt: expect.any(String), text: null });
+      expect(JSON.stringify(await deleted.catch(() => null))).not.toContain('socket edited');
       const message = await prisma.directMessage.create({ data: { senderId: b.id, receiverId: a.id, text: 'receipt event', createdAt: new Date('2026-01-11T00:00:00.000Z') } });
       const receipt = waitForSocketEvent<any>(socketB, 'direct:read', 'direct:read on socketB');
       await request(app.getHttpServer()).post('/messages/read').set('Authorization', `Bearer ${a.token}`).send({ threadType: 'DIRECT', threadKey: b.id, messageId: message.id }).expect(201);
@@ -164,6 +234,13 @@ describe('Messaging inbox and read state (integration)', () => {
       const typing = waitForSocketEvent<any>(socketB, 'chat:typing', 'chat:typing on socketB');
       socketA.emit('chat:typing', { groupId, isTyping: true });
       await expect(typing).resolves.toMatchObject({ groupId, userId: a.id, user: { id: a.id, name: 'Read State A' }, isTyping: true });
+      const owned = await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'group socket lifecycle' }).expect(201);
+      const updated = waitForSocketEvent<any>(socketB, 'message:updated', 'message:updated on socketB');
+      await request(app.getHttpServer()).patch(`/groups/${groupId}/messages/${owned.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'group socket edited' }).expect(200);
+      await expect(updated).resolves.toMatchObject({ id: owned.body.id, editedAt: expect.any(String), text: 'group socket edited' });
+      const deleted = waitForSocketEvent<any>(socketB, 'message:deleted', 'message:deleted on socketB');
+      await request(app.getHttpServer()).delete(`/groups/${groupId}/messages/${owned.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+      await expect(deleted).resolves.toMatchObject({ id: owned.body.id, deletedAt: expect.any(String), text: null });
     } finally { await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); }))); }
   });
 });

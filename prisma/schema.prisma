@@ -295,12 +295,14 @@ model GroupMember {
 }
 
 model Message {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   groupId   String
   userId    String
   text      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  editedAt  DateTime?
+  deletedAt DateTime?
 
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -310,12 +312,14 @@ model Message {
 }
 
 model DirectMessage {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   senderId   String
   receiverId String
   text       String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  editedAt   DateTime?
+  deletedAt  DateTime?
 
   sender   User @relation("DirectMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
   receiver User @relation("DirectMessageReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
@@ -368,6 +372,7 @@ model Checkin {
   @@index([userId])
   @@index([venueId])
   @@index([checkedInAt])
+  @@index([userId, checkedOutAt, expiresAt])
 }
 
 model Invite {

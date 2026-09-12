@@ -19,6 +19,7 @@ import { CreateMessageDto } from './dto/create-message.dto';
 import { MessagesService } from './messages.service';
 
 import type { AppSocket } from '../auth/socket/socket.types';
+import { MessageEvents, type MessageLifecycleEvent } from '../realtime/message-events';
 
 type JwtPayload = {
   sub: string;
@@ -50,6 +51,7 @@ export class MessagesGateway implements OnGatewayInit {
     private readonly messagesService: MessagesService,
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
+    private readonly messageEvents: MessageEvents,
   ) {}
 
   afterInit(server: Server): void {
@@ -89,6 +91,10 @@ export class MessagesGateway implements OnGatewayInit {
       next(new Error('Não autorizado.'));
     }
   }
+
+  onModuleInit(): void { this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); }
+  private readonly handleMessageUpdated = (event: MessageLifecycleEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:updated', event); };
+  private readonly handleMessageDeleted = (event: MessageLifecycleEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:deleted', event); };
   @SubscribeMessage(
     'chat:join',
   )

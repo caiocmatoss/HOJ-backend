@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { parsePagination, setPaginationHeaders } from '../common/pagination';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -46,4 +46,10 @@ export class MessagesController {
     setPaginationHeaders(response!, pagination, result.total);
     return result.items;
   }
+
+  @Patch('groups/:id/messages/:messageId')
+  edit(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Param('messageId') messageId: string, @Body() body: { text: string }) { return this.messagesService.edit(request.user.id, groupId, messageId, body.text); }
+
+  @Delete('groups/:id/messages/:messageId')
+  delete(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Param('messageId') messageId: string) { return this.messagesService.delete(request.user.id, groupId, messageId); }
 }

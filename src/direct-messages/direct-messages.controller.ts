@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { parsePagination, setPaginationHeaders } from '../common/pagination';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -24,4 +24,10 @@ export class DirectMessagesController {
   create(@Req() request: AuthenticatedRequest, @Param('userId') receiverId: string, @Body() dto: SendDirectMessageDto) {
     return this.directMessagesService.create(request.user.id, receiverId, dto);
   }
+
+  @Patch('messages/:messageId')
+  edit(@Req() request: AuthenticatedRequest, @Param('messageId') messageId: string, @Body() body: { text: string }) { return this.directMessagesService.edit(request.user.id, messageId, body.text); }
+
+  @Delete('messages/:messageId')
+  delete(@Req() request: AuthenticatedRequest, @Param('messageId') messageId: string) { return this.directMessagesService.delete(request.user.id, messageId); }
 }
