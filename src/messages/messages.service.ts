@@ -7,6 +7,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { MESSAGE_NOTIFICATION_TYPES } from '../notifications/notification-types';
 import { Prisma } from '../../generated/prisma/client';
 import { MessageEvents, type MessageLifecycleEvent } from '../realtime/message-events';
+import { summarizeReactions, withReactionSummary, type ReactionAggregate, type ReactionTypeValue } from './reaction-summary';
 
 @Injectable()
 export class MessagesService {
@@ -27,7 +28,7 @@ export class MessagesService {
     return { ...rest, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt };
   }
 
-  private serializeMessage(message: any): any { return { ...message, text: message.deletedAt ? null : message.text, user: this.publicUser(message.user) }; }
+  private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }): any { return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, user: this.publicUser(message.user) }, summary); }
 
   async create(userId: string, groupId: string, dto: CreateMessageDto) {
     await this.ensureMember(userId, groupId);
@@ -50,7 +51,10 @@ export class MessagesService {
       include: { user: { select: PUBLIC_USER_SELECT } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    const mapped = items.map((message: any) => this.serializeMessage(message));
+    const reactionRows = items.length ? await (this.prisma as any).messageReaction.findMany({ where: { messageId: { in: items.map((message: any) => message.id) } }, select: { messageId: true, userId: true, type: true } }) : [];
+    const byMessage = new Map<string, any[]>();
+    for (const row of reactionRows) byMessage.set(row.messageId, [...(byMessage.get(row.messageId) ?? []), row]);
+    const mapped = items.map((message: any) => this.serializeMessage(message, summarizeReactions(byMessage.get(message.id) ?? [], userId)));
     if (!pagination) return mapped;
     const total = await this.prisma.message.count({ where });
     return { items: mapped, total };
@@ -143,7 +147,7 @@ export class MessagesService {
     const nextText = text.trim();
     if (!nextText || nextText.length > 2000) throw new BadRequestException('Texto de mensagem inválido.');
     const message = nextText === existing.text ? existing : await this.prisma.message.update({ where: { id: messageId }, data: { text: nextText, editedAt: new Date() }, include: { user: { select: PUBLIC_USER_SELECT } } });
-    const serialized = this.serializeMessage(message);
+    const serialized = this.serializeMessage(message, await this.reactionResult(userId, messageId));
     if (message !== existing) this.messageEvents.emitUpdated(this.lifecycle(serialized));
     return serialized;
   }
@@ -156,6 +160,33 @@ export class MessagesService {
     const serialized = this.serializeMessage(message);
     if (!existing.deletedAt) this.messageEvents.emitDeleted(this.lifecycle(serialized));
     return serialized;
+  }
+
+  private async reactionResult(userId: string, messageId: string) {
+    const rows = await (this.prisma as any).messageReaction.findMany({ where: { messageId }, select: { userId: true, type: true } });
+    return summarizeReactions(rows, userId);
+  }
+
+  async setReaction(userId: string, groupId: string, messageId: string, type: ReactionTypeValue) {
+    await this.ensureMember(userId, groupId);
+    const message = await this.prisma.message.findUnique({ where: { id: messageId } });
+    if (!message || message.groupId !== groupId) throw new NotFoundException('Mensagem não encontrada.');
+    if (message.deletedAt) throw new NotFoundException('Mensagem excluída.');
+    const row = await (this.prisma as any).messageReaction.upsert({ where: { messageId_userId: { messageId, userId } }, create: { messageId, userId, type }, update: { type } });
+    const summary = await this.reactionResult(userId, messageId);
+    this.messageEvents.emitReaction({ messageId, actorUserId: userId, reaction: row.type, reactions: summary.reactions, groupId });
+    return { ...summary, messageId };
+  }
+
+  async removeReaction(userId: string, groupId: string, messageId: string) {
+    await this.ensureMember(userId, groupId);
+    const message = await this.prisma.message.findUnique({ where: { id: messageId } });
+    if (!message || message.groupId !== groupId) throw new NotFoundException('Mensagem não encontrada.');
+    if (message.deletedAt) throw new NotFoundException('Mensagem excluída.');
+    await (this.prisma as any).messageReaction.deleteMany({ where: { messageId, userId } });
+    const summary = await this.reactionResult(userId, messageId);
+    this.messageEvents.emitReaction({ messageId, actorUserId: userId, reaction: null, reactions: summary.reactions, groupId });
+    return { ...summary, messageId };
   }
 
   private lifecycle(message: any): MessageLifecycleEvent { return { id: message.id, groupId: message.groupId, userId: message.userId, text: message.text ?? null, createdAt: new Date(message.createdAt).toISOString(), updatedAt: message.updatedAt ? new Date(message.updatedAt).toISOString() : undefined, editedAt: message.editedAt ? new Date(message.editedAt).toISOString() : null, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null }; }

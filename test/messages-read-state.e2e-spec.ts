@@ -243,4 +243,75 @@ describe('Messaging inbox and read state (integration)', () => {
       await expect(deleted).resolves.toMatchObject({ id: owned.body.id, deletedAt: expect.any(String), text: null });
     } finally { await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); }))); }
   });
+
+  it('exercises direct and group reaction persistence, aggregation, replacement and deletion', async () => {
+    const direct = await prisma.directMessage.create({ data: { senderId: b.id, receiverId: a.id, text: 'reaction direct', createdAt: new Date('2026-01-12T00:00:00.000Z') } });
+    const beforeUnread = (await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${a.token}`).expect(200)).body.count;
+    const first = await request(app.getHttpServer()).put(`/direct-messages/messages/${direct.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'LOVE' }).expect(200);
+    expect(first.body).toMatchObject({ messageId: direct.id, myReaction: 'LOVE', reactions: [{ type: 'LOVE', count: 1 }] });
+    const reloaded = await request(app.getHttpServer()).get(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(reloaded.body.find((item: any) => item.id === direct.id)).toMatchObject({ myReaction: 'LOVE', reactions: [{ type: 'LOVE', count: 1 }] });
+    await request(app.getHttpServer()).put(`/direct-messages/messages/${direct.id}/reaction`).set('Authorization', `Bearer ${b.token}`).send({ type: 'LOVE' }).expect(200);
+    expect(await prisma.directMessageReaction.count({ where: { directMessageId: direct.id, userId: a.id } })).toBe(1);
+    const aggregate = await request(app.getHttpServer()).get(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(aggregate.body.find((item: any) => item.id === direct.id).reactions).toEqual([{ type: 'LOVE', count: 2 }]);
+    await request(app.getHttpServer()).put(`/direct-messages/messages/${direct.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'LAUGH' }).expect(200);
+    const replaced = await request(app.getHttpServer()).get(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(replaced.body.find((item: any) => item.id === direct.id).reactions).toEqual([{ type: 'LOVE', count: 1 }, { type: 'LAUGH', count: 1 }]);
+    await request(app.getHttpServer()).delete(`/direct-messages/messages/${direct.id}/reaction`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    const removed = await request(app.getHttpServer()).get(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(removed.body.find((item: any) => item.id === direct.id)).toMatchObject({ myReaction: null, reactions: [{ type: 'LOVE', count: 1 }] });
+    expect((await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${a.token}`).expect(200)).body.count).toBe(beforeUnread);
+    await request(app.getHttpServer()).patch(`/direct-messages/messages/${direct.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'reaction edited' }).expect(200);
+    expect((await request(app.getHttpServer()).get(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).expect(200)).body.find((item: any) => item.id === direct.id).reactions).toEqual([{ type: 'LOVE', count: 1 }]);
+    await request(app.getHttpServer()).delete(`/direct-messages/messages/${direct.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    const deleted = await request(app.getHttpServer()).get(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(deleted.body.find((item: any) => item.id === direct.id)).toMatchObject({ text: null, reactions: [], myReaction: null });
+    await request(app.getHttpServer()).put(`/direct-messages/messages/${direct.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'WOW' }).expect(404);
+
+    const groupMessage = await prisma.message.create({ data: { groupId, userId: b.id, text: 'reaction group', createdAt: new Date('2026-01-13T00:00:00.000Z') } });
+    await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'FIRE' }).expect(200);
+    await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${b.token}`).send({ type: 'SAD' }).expect(200);
+    const groupReload = await request(app.getHttpServer()).get(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(groupReload.body.find((item: any) => item.id === groupMessage.id).reactions).toEqual([{ type: 'SAD', count: 1 }, { type: 'FIRE', count: 1 }]);
+    const groupReplace = await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'LAUGH' }).expect(200);
+    expect(groupReplace.body.myReaction).toBe('LAUGH');
+    expect(groupReplace.body.reactions).toEqual([{ type: 'LAUGH', count: 1 }, { type: 'SAD', count: 1 }]);
+    expect(await prisma.messageReaction.count({ where: { messageId: groupMessage.id, userId: a.id } })).toBe(1);
+    expect((await prisma.messageReaction.findUnique({ where: { messageId_userId: { messageId: groupMessage.id, userId: a.id } } }))?.type).toBe('LAUGH');
+    await request(app.getHttpServer()).delete(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    await request(app.getHttpServer()).delete(`/groups/${groupId}/messages/${groupMessage.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+    await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'LIKE' }).expect(404);
+    await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${c.token}`).send({ type: 'LIKE' }).expect(404);
+  });
+
+  it('emits reaction updates only after persisted REST mutations', async () => {
+    const sockets: Socket[] = [];
+    const connect = (token: string) => new Promise<Socket>((resolve, reject) => { const socket = io(baseUrl, { transports: ['websocket'], auth: { token } }); sockets.push(socket); const timer = setTimeout(() => { socket.close(); reject(new Error('reaction socket connection timeout')); }, 2000); socket.once('connect', () => { clearTimeout(timer); resolve(socket); }); socket.once('connect_error', (error) => { clearTimeout(timer); reject(error); }); });
+    try {
+      const [socketA, socketB] = await Promise.all([connect(a.token), connect(b.token)]);
+      const joinedA = waitForSocketEvent(socketA, 'direct:chat:joined', 'reaction direct join A'); socketA.emit('direct:join', { userId: b.id }); await joinedA;
+      const joinedB = waitForSocketEvent(socketB, 'direct:chat:joined', 'reaction direct join B'); socketB.emit('direct:join', { userId: a.id }); await joinedB;
+      const direct = await prisma.directMessage.create({ data: { senderId: b.id, receiverId: a.id, text: 'reaction event', createdAt: new Date('2026-01-14T00:00:00.000Z') } });
+      const directEvent = waitForSocketEvent<any>(socketB, 'direct:message:reaction:updated', 'direct reaction event');
+      await request(app.getHttpServer()).put(`/direct-messages/messages/${direct.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'LOVE' }).expect(200);
+      await expect(directEvent).resolves.toMatchObject({ messageId: direct.id, actorUserId: a.id, reaction: 'LOVE', reactions: [{ type: 'LOVE', count: 1 }] });
+      expect((await prisma.directMessageReaction.findUnique({ where: { directMessageId_userId: { directMessageId: direct.id, userId: a.id } } }))?.type).toBe('LOVE');
+      const directRemove = waitForSocketEvent<any>(socketB, 'direct:message:reaction:updated', 'direct reaction removal');
+      await request(app.getHttpServer()).delete(`/direct-messages/messages/${direct.id}/reaction`).set('Authorization', `Bearer ${a.token}`).expect(200);
+      await expect(directRemove).resolves.toMatchObject({ messageId: direct.id, actorUserId: a.id, reaction: null, reactions: [] });
+      socketA.emit('chat:join', { groupId }); socketB.emit('chat:join', { groupId }); await new Promise((resolve) => setTimeout(resolve, 100));
+      const groupMessage = await prisma.message.create({ data: { groupId, userId: b.id, text: 'group reaction event', createdAt: new Date('2026-01-15T00:00:00.000Z') } });
+      const groupEvent = waitForSocketEvent<any>(socketB, 'message:reaction:updated', 'group reaction event');
+      await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'WOW' }).expect(200);
+      await expect(groupEvent).resolves.toMatchObject({ messageId: groupMessage.id, groupId, actorUserId: a.id, reaction: 'WOW', reactions: [{ type: 'WOW', count: 1 }] });
+      expect((await prisma.messageReaction.findUnique({ where: { messageId_userId: { messageId: groupMessage.id, userId: a.id } } }))?.type).toBe('WOW');
+      const groupRemove = waitForSocketEvent<any>(socketB, 'message:reaction:updated', 'group reaction removal');
+      await request(app.getHttpServer()).delete(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${a.token}`).expect(200);
+      await expect(groupRemove).resolves.toMatchObject({ messageId: groupMessage.id, groupId, actorUserId: a.id, reaction: null, reactions: [] });
+      const failed = waitForSocketEvent<any>(socketB, 'message:reaction:updated', 'no false group reaction event', 250);
+      await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${groupMessage.id}/reaction`).set('Authorization', `Bearer ${c.token}`).send({ type: 'LIKE' }).expect(404);
+      await expect(failed).rejects.toThrow('Timed out waiting');
+    } finally { await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); }))); }
+  });
 });

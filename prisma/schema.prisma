@@ -50,6 +50,15 @@ enum MessageThreadType {
   GROUP
 }
 
+enum ReactionType {
+  LIKE
+  LOVE
+  LAUGH
+  WOW
+  SAD
+  FIRE
+}
+
 enum LocationAccuracy {
   HIGH
   BALANCED
@@ -105,6 +114,8 @@ model User {
   authActionTokens        AuthActionToken[]
   pushDevices             PushDevice[]
   messageReadStates       MessageReadState[]
+  messageReactions        MessageReaction[]
+  directMessageReactions  DirectMessageReaction[]
 
   @@index([name])
   @@index([status])
@@ -304,10 +315,27 @@ model Message {
   editedAt  DateTime?
   deletedAt DateTime?
 
-  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group     Group             @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reactions MessageReaction[]
 
   @@index([groupId, createdAt])
+  @@index([userId])
+}
+
+model MessageReaction {
+  id        String       @id @default(cuid())
+  messageId String
+  userId    String
+  type      ReactionType
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId, type])
   @@index([userId])
 }
 
@@ -321,11 +349,28 @@ model DirectMessage {
   editedAt   DateTime?
   deletedAt  DateTime?
 
-  sender   User @relation("DirectMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
-  receiver User @relation("DirectMessageReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  sender    User                    @relation("DirectMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver  User                    @relation("DirectMessageReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  reactions DirectMessageReaction[]
 
   @@index([senderId, receiverId, createdAt])
   @@index([receiverId, senderId, createdAt])
+}
+
+model DirectMessageReaction {
+  id              String       @id @default(cuid())
+  directMessageId String
+  userId          String
+  type            ReactionType
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  directMessage DirectMessage @relation(fields: [directMessageId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([directMessageId, userId])
+  @@index([directMessageId, type])
+  @@index([userId])
 }
 
 model MessageReadState {

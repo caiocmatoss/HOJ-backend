@@ -13,9 +13,11 @@ export type MessageLifecycleEvent = {
   editedAt?: string | null;
   deletedAt?: string | null;
 };
+export type MessageReactionEvent = { messageId: string; actorUserId: string; reaction: string | null; reactions: Array<{ type: string; count: number }>; direct?: boolean; groupId?: string; occurredAt?: string };
 
 @Injectable()
 export class MessageEvents extends EventEmitter {
   emitUpdated(event: MessageLifecycleEvent): void { this.emit('message:updated', event); }
   emitDeleted(event: MessageLifecycleEvent): void { this.emit('message:deleted', event); }
+  emitReaction(event: MessageReactionEvent): void { this.emit('message:reaction:updated', { ...event, occurredAt: event.occurredAt ?? new Date().toISOString() }); }
 }

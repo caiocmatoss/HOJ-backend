@@ -19,7 +19,7 @@ import { CreateMessageDto } from './dto/create-message.dto';
 import { MessagesService } from './messages.service';
 
 import type { AppSocket } from '../auth/socket/socket.types';
-import { MessageEvents, type MessageLifecycleEvent } from '../realtime/message-events';
+import { MessageEvents, type MessageLifecycleEvent, type MessageReactionEvent } from '../realtime/message-events';
 
 type JwtPayload = {
   sub: string;
@@ -92,9 +92,10 @@ export class MessagesGateway implements OnGatewayInit {
     }
   }
 
-  onModuleInit(): void { this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); }
+  onModuleInit(): void { this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); this.messageEvents.on('message:reaction:updated', this.handleReaction); }
   private readonly handleMessageUpdated = (event: MessageLifecycleEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:updated', event); };
   private readonly handleMessageDeleted = (event: MessageLifecycleEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:deleted', event); };
+  private readonly handleReaction = (event: MessageReactionEvent): void => { if (event.groupId) this.server?.to(`group:${event.groupId}`).emit('message:reaction:updated', event); };
   @SubscribeMessage(
     'chat:join',
   )

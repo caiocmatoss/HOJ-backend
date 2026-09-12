@@ -6,6 +6,7 @@ import { SendDirectMessageDto } from './dto/send-direct-message.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MESSAGE_NOTIFICATION_TYPES } from '../notifications/notification-types';
 import { MessageEvents, type MessageLifecycleEvent } from '../realtime/message-events';
+import { summarizeReactions, withReactionSummary, type ReactionAggregate, type ReactionTypeValue } from '../messages/reaction-summary';
 
 @Injectable()
 export class DirectMessagesService {
@@ -30,8 +31,8 @@ export class DirectMessagesService {
     return { ...rest, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt };
   }
 
-  private serializeMessage(message: any): any {
-    return { ...message, text: message.deletedAt ? null : message.text, sender: this.publicUser(message.sender), receiver: this.publicUser(message.receiver) };
+  private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }): any {
+    return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, sender: this.publicUser(message.sender), receiver: this.publicUser(message.receiver) }, summary);
   }
 
   async create(senderId: string, receiverId: string, dto: SendDirectMessageDto) {
@@ -53,7 +54,10 @@ export class DirectMessagesService {
       this.prisma.directMessage.findMany({ where, ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}), include: { sender: { select: PUBLIC_USER_SELECT }, receiver: { select: PUBLIC_USER_SELECT } }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }),
       this.prisma.directMessage.count({ where }),
     ]);
-    const mapped = items.map((message: any) => this.serializeMessage(message));
+    const reactionRows = items.length ? await (this.prisma as any).directMessageReaction.findMany({ where: { directMessageId: { in: items.map((message: any) => message.id) } }, select: { directMessageId: true, userId: true, type: true } }) : [];
+    const byMessage = new Map<string, any[]>();
+    for (const row of reactionRows) byMessage.set(row.directMessageId, [...(byMessage.get(row.directMessageId) ?? []), row]);
+    const mapped = items.map((message: any) => this.serializeMessage(message, summarizeReactions(byMessage.get(message.id) ?? [], userId)));
     if (!pagination) return mapped;
     return { items: mapped, total };
   }
@@ -70,7 +74,7 @@ export class DirectMessagesService {
     const nextText = text.trim();
     if (!nextText || nextText.length > 2000) throw new NotFoundException('Texto de mensagem inválido.');
     const message = nextText === existing.text ? existing : await this.prisma.directMessage.update({ where: { id: messageId }, data: { text: nextText, editedAt: new Date() }, include: { sender: { select: PUBLIC_USER_SELECT }, receiver: { select: PUBLIC_USER_SELECT } } });
-    const serialized = this.serializeMessage(message);
+    const serialized = this.serializeMessage(message, await this.reactionResult(userId, messageId));
     if (message !== existing) this.messageEvents.emitUpdated(this.lifecycle(serialized));
     return serialized;
   }
@@ -81,6 +85,38 @@ export class DirectMessagesService {
     const serialized = this.serializeMessage(message);
     if (!existing.deletedAt) this.messageEvents.emitDeleted(this.lifecycle(serialized));
     return serialized;
+  }
+
+  private async ensureReactionAccess(userId: string, message: any) {
+    if (!message || message.senderId === message.receiverId || (message.senderId !== userId && message.receiverId !== userId)) throw new NotFoundException('Mensagem não encontrada.');
+    const peerId = message.senderId === userId ? message.receiverId : message.senderId;
+    const friendship = await this.prisma.friendship.findFirst({ where: { status: 'ACCEPTED', OR: [{ requesterId: userId, addresseeId: peerId }, { requesterId: peerId, addresseeId: userId }] } });
+    if (!friendship) throw new NotFoundException('Conversa não encontrada.');
+  }
+
+  private async reactionResult(userId: string, messageId: string) {
+    const rows = await (this.prisma as any).directMessageReaction.findMany({ where: { directMessageId: messageId }, select: { userId: true, type: true } });
+    return summarizeReactions(rows, userId);
+  }
+
+  async setReaction(userId: string, messageId: string, type: ReactionTypeValue) {
+    const message = await this.prisma.directMessage.findUnique({ where: { id: messageId } });
+    await this.ensureReactionAccess(userId, message);
+    if (!message || message.deletedAt) throw new NotFoundException('Mensagem excluída.');
+    const row = await (this.prisma as any).directMessageReaction.upsert({ where: { directMessageId_userId: { directMessageId: messageId, userId } }, create: { directMessageId: messageId, userId, type }, update: { type } });
+    const summary = await this.reactionResult(userId, messageId);
+    this.messageEvents.emitReaction({ messageId, actorUserId: userId, reaction: row.type, reactions: summary.reactions, direct: true });
+    return { ...summary, messageId };
+  }
+
+  async removeReaction(userId: string, messageId: string) {
+    const message = await this.prisma.directMessage.findUnique({ where: { id: messageId } });
+    await this.ensureReactionAccess(userId, message);
+    if (!message || message.deletedAt) throw new NotFoundException('Mensagem excluída.');
+    await (this.prisma as any).directMessageReaction.deleteMany({ where: { directMessageId: messageId, userId } });
+    const summary = await this.reactionResult(userId, messageId);
+    this.messageEvents.emitReaction({ messageId, actorUserId: userId, reaction: null, reactions: summary.reactions, direct: true });
+    return { ...summary, messageId };
   }
 
   private lifecycle(message: any): MessageLifecycleEvent { return { id: message.id, senderId: message.senderId, receiverId: message.receiverId, text: message.text ?? null, createdAt: new Date(message.createdAt).toISOString(), updatedAt: message.updatedAt ? new Date(message.updatedAt).toISOString() : undefined, editedAt: message.editedAt ? new Date(message.editedAt).toISOString() : null, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null }; }

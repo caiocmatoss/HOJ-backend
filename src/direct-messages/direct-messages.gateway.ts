@@ -18,7 +18,7 @@ import { DirectMessagesService } from './direct-messages.service';
 
 import type { AppSocket } from '../auth/socket/socket.types';
 import { DirectReadEvents, type DirectReadEvent } from '../realtime/direct-read-events';
-import { MessageEvents, type MessageLifecycleEvent } from '../realtime/message-events';
+import { MessageEvents, type MessageLifecycleEvent, type MessageReactionEvent } from '../realtime/message-events';
 
 type ChatErrorData = {
   code?: string;
@@ -101,13 +101,14 @@ export class DirectMessagesGateway implements OnGatewayInit {
     }
   }
 
-  onModuleInit(): void { this.directReadEvents.on('direct:read', this.handleDirectRead); this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); }
+  onModuleInit(): void { this.directReadEvents.on('direct:read', this.handleDirectRead); this.messageEvents.on('message:updated', this.handleMessageUpdated); this.messageEvents.on('message:deleted', this.handleMessageDeleted); this.messageEvents.on('message:reaction:updated', this.handleReaction); }
 
   private readonly handleDirectRead = (event: DirectReadEvent): void => {
     this.server?.to(getDirectRoom(event.userId, event.peerUserId)).emit('direct:read', event);
   };
   private readonly handleMessageUpdated = (event: MessageLifecycleEvent): void => { if (event.senderId && event.receiverId) this.server?.to(getDirectRoom(event.senderId, event.receiverId)).emit('direct:message:updated', event); };
   private readonly handleMessageDeleted = (event: MessageLifecycleEvent): void => { if (event.senderId && event.receiverId) this.server?.to(getDirectRoom(event.senderId, event.receiverId)).emit('direct:message:deleted', event); };
+  private readonly handleReaction = (event: MessageReactionEvent): void => { if (event.direct && event.messageId) this.prisma.directMessage.findUnique({ where: { id: event.messageId }, select: { senderId: true, receiverId: true } }).then((message) => { if (message) this.server?.to(getDirectRoom(message.senderId, message.receiverId)).emit('direct:message:reaction:updated', event); }).catch(() => undefined); };
   @SubscribeMessage('direct:join')
   async handleJoin(
     @ConnectedSocket()

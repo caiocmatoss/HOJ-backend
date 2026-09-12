@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { parsePagination, setPaginationHeaders } from '../common/pagination';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { MessagesService } from './messages.service';
+import { REACTION_ORDER, type ReactionTypeValue } from './reaction-summary';
 import { DirectReadEvents } from '../realtime/direct-read-events';
 
 type AuthenticatedRequest = Request & { user: { id: string } };
@@ -52,4 +53,13 @@ export class MessagesController {
 
   @Delete('groups/:id/messages/:messageId')
   delete(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Param('messageId') messageId: string) { return this.messagesService.delete(request.user.id, groupId, messageId); }
+
+  @Put('groups/:id/messages/:messageId/reaction')
+  setReaction(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Param('messageId') messageId: string, @Body() body: { type: ReactionTypeValue }) {
+    if (!REACTION_ORDER.includes(body?.type)) throw new BadRequestException('Tipo de reação inválido.');
+    return this.messagesService.setReaction(request.user.id, groupId, messageId, body.type);
+  }
+
+  @Delete('groups/:id/messages/:messageId/reaction')
+  removeReaction(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Param('messageId') messageId: string) { return this.messagesService.removeReaction(request.user.id, groupId, messageId); }
 }
