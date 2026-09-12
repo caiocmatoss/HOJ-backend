@@ -50,8 +50,8 @@ export class MessageForwardService {
   }
 
   async fromDirect(userId: string, sourceId: string, dto: ForwardMessageDto) {
-    const source = await this.prisma.directMessage.findUnique({ where: { id: sourceId }, select: { id: true, senderId: true, receiverId: true, text: true, deletedAt: true } });
-    if (!source || source.deletedAt || (source.senderId !== userId && source.receiverId !== userId)) throw new NotFoundException('Mensagem não encontrada.');
+    const source = await this.prisma.directMessage.findUnique({ where: { id: sourceId }, select: { id: true, senderId: true, receiverId: true, text: true, imageUrl: true, deletedAt: true } });
+    if (!source || source.deletedAt || source.imageUrl || (source.senderId !== userId && source.receiverId !== userId)) throw new NotFoundException('Mensagem não encontrada.');
     if (dto.targetType === 'DIRECT') {
       await this.ensureDirectTarget(userId, dto.targetId);
       return this.createDirect(userId, dto.targetId, source.text);
@@ -63,8 +63,8 @@ export class MessageForwardService {
 
   async fromGroup(userId: string, sourceGroupId: string, sourceId: string, dto: ForwardMessageDto) {
     const sourceMember = await this.prisma.groupMember.findUnique({ where: { groupId_userId: { groupId: sourceGroupId, userId } }, select: { id: true } });
-    const source = await this.prisma.message.findUnique({ where: { id: sourceId }, select: { id: true, groupId: true, userId: true, text: true, deletedAt: true } });
-    if (!sourceMember || !source || source.groupId !== sourceGroupId || source.deletedAt) throw new NotFoundException('Mensagem não encontrada.');
+    const source = await this.prisma.message.findUnique({ where: { id: sourceId }, select: { id: true, groupId: true, userId: true, text: true, imageUrl: true, deletedAt: true } });
+    if (!sourceMember || !source || source.groupId !== sourceGroupId || source.deletedAt || source.imageUrl) throw new NotFoundException('Mensagem não encontrada.');
     if (dto.targetType === 'DIRECT') {
       await this.ensureDirectTarget(userId, dto.targetId);
       return this.createDirect(userId, dto.targetId, source.text);

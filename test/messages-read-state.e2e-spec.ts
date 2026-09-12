@@ -4,6 +4,7 @@ import request from 'supertest';
 import { io, type Socket } from 'socket.io-client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import sharp from 'sharp';
 
 function waitForSocketEvent<T>(socket: Socket, event: string, label: string, timeoutMs = 2000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -18,11 +19,12 @@ async function waitForEventAndCount<T extends { id?: string }>(
   event: string,
   label: string,
   action: () => Promise<string>,
+  observe?: (payload: T) => void,
 ): Promise<{ id: string; events: T[] }> {
   const events: T[] = [];
   const first = new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => { socket.off(event, onEvent); reject(new Error(`Timed out waiting for ${label}`)); }, 2000);
-    const onEvent = (payload: T) => { events.push(payload); clearTimeout(timer); resolve(payload); };
+    const onEvent = (payload: T) => { events.push(payload); observe?.(payload); clearTimeout(timer); resolve(payload); };
     socket.on(event, onEvent);
   });
   const id = await action();
@@ -555,5 +557,129 @@ describe('Messaging inbox and read state (integration)', () => {
       await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); })));
     }
     await request(app.getHttpServer()).delete(`/groups/${targetGroup.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+  });
+
+  it('persists real Direct and Group image messages with safe history and inbox semantics', async () => {
+    const makeImage = async (format: 'jpeg' | 'png' | 'webp') => sharp({ create: { width: 64, height: 64, channels: 3, background: '#336699' } }).toFormat(format).toBuffer();
+    const formats = [
+      ['jpeg', 'image.jpg', 'image/jpeg'],
+      ['png', 'image.png', 'image/png'],
+      ['webp', 'image.webp', 'image/webp'],
+    ] as const;
+    const imageIds: string[] = [];
+    const unreadBefore = (await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${b.token}`).expect(200)).body.count as number;
+    for (const [format, filename, mime] of formats) {
+      const response = await request(app.getHttpServer()).post(`/direct-messages/${b.id}/image`).set('Authorization', `Bearer ${a.token}`).field('text', '').attach('image', await makeImage(format), { filename, contentType: mime }).expect(201);
+      imageIds.push(response.body.id);
+      expect(response.body).toMatchObject({ text: '', imageUrl: expect.stringContaining('.webp') });
+      expect(await prisma.directMessage.findUnique({ where: { id: response.body.id } })).toMatchObject({ text: '', imageUrl: response.body.imageUrl });
+      const history = await request(app.getHttpServer()).get(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+      expect(history.body.find((item: any) => item.id === response.body.id)).toMatchObject({ imageUrl: response.body.imageUrl });
+    }
+    const unreadAfter = (await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${b.token}`).expect(200)).body.count as number;
+    expect(unreadAfter).toBe(unreadBefore + formats.length);
+    const inbox = await request(app.getHttpServer()).get('/messages/inbox?page=1&limit=10').set('Authorization', `Bearer ${b.token}`).expect(200);
+    expect(inbox.body.find((item: any) => item.lastMessage.id === imageIds[imageIds.length - 1]).lastMessage.text).toBe('Foto');
+    const textImage = await request(app.getHttpServer()).post(`/groups/${groupId}/messages/image`).set('Authorization', `Bearer ${a.token}`).field('text', 'caption').attach('image', await makeImage('png'), { filename: 'caption.png', contentType: 'image/png' }).expect(201);
+    expect(textImage.body).toMatchObject({ text: 'caption', imageUrl: expect.stringContaining('.webp') });
+    expect(await prisma.message.findUnique({ where: { id: textImage.body.id } })).toMatchObject({ text: 'caption', imageUrl: textImage.body.imageUrl });
+    const invalid = await request(app.getHttpServer()).post(`/direct-messages/${b.id}/image`).set('Authorization', `Bearer ${a.token}`).field('text', '').attach('image', Buffer.from('not-an-image'), { filename: 'fake.png', contentType: 'image/png' });
+    expect(invalid.status).toBe(400);
+    const countBeforeOversize = await prisma.directMessage.count({ where: { senderId: a.id, receiverId: b.id } });
+    const oversize = await request(app.getHttpServer()).post(`/direct-messages/${b.id}/image`).set('Authorization', `Bearer ${a.token}`).field('text', '').attach('image', Buffer.alloc(5 * 1024 * 1024 + 1), { filename: 'large.jpg', contentType: 'image/jpeg' });
+    expect(oversize.status).toBe(413);
+    expect(await prisma.directMessage.count({ where: { senderId: a.id, receiverId: b.id } })).toBe(countBeforeOversize);
+    const deleted = await request(app.getHttpServer()).delete(`/direct-messages/messages/${imageIds[imageIds.length - 1]}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    expect(deleted.body).toMatchObject({ text: null, imageUrl: null });
+  });
+
+  it('covers image realtime, reactions, replies, edits and forward rejection', async () => {
+    const image = () => sharp({ create: { width: 64, height: 64, channels: 3, background: '#884422' } }).png().toBuffer();
+    const sockets: Socket[] = [];
+    const connect = (token: string) => new Promise<Socket>((resolve, reject) => {
+      const socket = io(baseUrl, { transports: ['websocket'], auth: { token } }); sockets.push(socket);
+      const timer = setTimeout(() => { socket.close(); reject(new Error('image socket connection timeout')); }, 2000);
+      socket.once('connect', () => { clearTimeout(timer); resolve(socket); }); socket.once('connect_error', reject);
+    });
+    try {
+      const [socketA, socketB] = await Promise.all([connect(a.token), connect(b.token)]);
+      const joinA = waitForSocketEvent(socketA, 'direct:chat:joined', 'image direct join A'); socketA.emit('direct:join', { userId: b.id }); await joinA;
+      const joinB = waitForSocketEvent(socketB, 'direct:chat:joined', 'image direct join B'); socketB.emit('direct:join', { userId: a.id }); await joinB;
+      let directRowAtEvent: Promise<any> | null = null;
+      const directEvent = waitForEventAndCount<any>(socketB, 'direct:message:new', 'image direct event', async () => {
+        const result = await request(app.getHttpServer()).post(`/direct-messages/${b.id}/image`).set('Authorization', `Bearer ${a.token}`).field('text', '').attach('image', await image(), { filename: 'socket.png', contentType: 'image/png' }).expect(201); return result.body.id;
+      }, (payload) => { directRowAtEvent = prisma.directMessage.findUnique({ where: { id: payload.id } }); });
+      const direct = await directEvent;
+      expect(direct.events).toHaveLength(1); expect(direct.events[0]).toMatchObject({ id: direct.id, text: '', imageUrl: expect.any(String) });
+      expect(await directRowAtEvent).toMatchObject({ id: direct.id, text: '', imageUrl: direct.events[0].imageUrl });
+      const reaction = await request(app.getHttpServer()).put(`/direct-messages/messages/${direct.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'LOVE' }).expect(200);
+      expect(reaction.body).toMatchObject({ myReaction: 'LOVE', reactions: [{ type: 'LOVE', count: 1 }] });
+      const directImageReply = await request(app.getHttpServer()).post(`/direct-messages/${a.id}/image`).set('Authorization', `Bearer ${b.token}`).field('replyToId', direct.id).attach('image', await image(), { filename: 'direct-reply.png', contentType: 'image/png' }).expect(201);
+      expect(directImageReply.body.replyTo).toMatchObject({ id: direct.id, imageUrl: direct.events[0].imageUrl });
+      expect(directImageReply.body.replyTo).not.toHaveProperty('reactions');
+      const reply = await request(app.getHttpServer()).post(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'reply image', replyToId: direct.id }).expect(201);
+      expect(reply.body.replyTo).toMatchObject({ id: direct.id, imageUrl: direct.events[0].imageUrl }); expect(reply.body.replyTo).not.toHaveProperty('reactions'); expect(reply.body.replyTo).not.toHaveProperty('myReaction'); expect(reply.body.replyTo).not.toHaveProperty('replyTo');
+      await request(app.getHttpServer()).delete(`/direct-messages/messages/${direct.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+      const reloadedReply = (await request(app.getHttpServer()).get(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).expect(200)).body.find((item: any) => item.id === reply.body.id); expect(reloadedReply.replyTo).toMatchObject({ text: null, imageUrl: null });
+      const editable = await request(app.getHttpServer()).post(`/direct-messages/${b.id}/image`).set('Authorization', `Bearer ${a.token}`).field('text', 'caption').attach('image', await image(), { filename: 'edit.png', contentType: 'image/png' }).expect(201); const originalImageUrl = editable.body.imageUrl;
+      const edited = await request(app.getHttpServer()).patch(`/direct-messages/messages/${editable.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: '' }).expect(200); expect(edited.body).toMatchObject({ text: '', imageUrl: originalImageUrl });
+      const beforeForward = await prisma.directMessage.count({ where: { receiverId: c.id, isForwarded: true } });
+      await request(app.getHttpServer()).post(`/direct-messages/messages/${editable.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: c.id }).expect(404); expect(await prisma.directMessage.count({ where: { receiverId: c.id, isForwarded: true } })).toBe(beforeForward);
+
+      const groupJoinA = waitForSocketEvent(socketA, 'chat:joined', 'image group join A'); socketA.emit('chat:join', { groupId }); await groupJoinA;
+      const groupJoinB = waitForSocketEvent(socketB, 'chat:joined', 'image group join B'); socketB.emit('chat:join', { groupId }); await groupJoinB;
+      let groupRowAtEvent: Promise<any> | null = null;
+      const groupEvent = waitForEventAndCount<any>(socketB, 'message:new', 'image group event', async () => {
+        const result = await request(app.getHttpServer()).post(`/groups/${groupId}/messages/image`).set('Authorization', `Bearer ${a.token}`).field('text', '').attach('image', await image(), { filename: 'group.png', contentType: 'image/png' }).expect(201); return result.body.id;
+      }, (payload) => { groupRowAtEvent = prisma.message.findUnique({ where: { id: payload.id } }); });
+      const group = await groupEvent;
+      expect(group.events).toHaveLength(1); expect(group.events[0]).toMatchObject({ id: group.id, text: '', imageUrl: expect.any(String) }); expect(await groupRowAtEvent).toMatchObject({ id: group.id, imageUrl: group.events[0].imageUrl });
+      const groupTextImage = await request(app.getHttpServer()).post(`/groups/${groupId}/messages/image`).set('Authorization', `Bearer ${a.token}`).field('text', 'foto do grupo').attach('image', await image(), { filename: 'group-caption.png', contentType: 'image/png' }).expect(201);
+      const groupReaction = await request(app.getHttpServer()).put(`/groups/${groupId}/messages/${group.id}/reaction`).set('Authorization', `Bearer ${a.token}`).send({ type: 'LOVE' }).expect(200); expect(groupReaction.body).toMatchObject({ myReaction: 'LOVE', reactions: [{ type: 'LOVE', count: 1 }] });
+      const groupReply = await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${b.token}`).send({ text: 'group reply image', replyToId: group.id }).expect(201); expect(groupReply.body.replyTo).toMatchObject({ id: group.id, imageUrl: group.events[0].imageUrl }); expect(groupReply.body.replyTo).not.toHaveProperty('reactions'); expect(groupReply.body.replyTo).not.toHaveProperty('myReaction'); expect(groupReply.body.replyTo).not.toHaveProperty('replyTo');
+      const groupInboxText = await request(app.getHttpServer()).get('/messages/inbox?page=1&limit=20').set('Authorization', `Bearer ${b.token}`).expect(200);
+      const groupInboxTextRow = groupInboxText.body.find((item: any) => item.groupId === groupId);
+      expect(groupInboxTextRow?.lastMessage.id).toBe(groupReply.body.id);
+      expect(groupInboxTextRow?.lastMessage.text).toBe('group reply image');
+      const groupImageReply = await request(app.getHttpServer()).post(`/groups/${groupId}/messages/image`).set('Authorization', `Bearer ${b.token}`).field('replyToId', group.id).attach('image', await image(), { filename: 'group-reply.png', contentType: 'image/png' }).expect(201);
+      expect(groupImageReply.body.replyTo).toMatchObject({ id: group.id, imageUrl: group.events[0].imageUrl });
+      const groupUnreadBefore = (await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${b.token}`).expect(200)).body.count as number;
+      const groupImageOnly = await request(app.getHttpServer()).post(`/groups/${groupId}/messages/image`).set('Authorization', `Bearer ${a.token}`).field('text', '').attach('image', await image(), { filename: 'group-only.png', contentType: 'image/png' }).expect(201);
+      const groupUnreadAfter = (await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${b.token}`).expect(200)).body.count as number;
+      expect(groupUnreadAfter).toBe(groupUnreadBefore + 1);
+      const groupInboxImage = await request(app.getHttpServer()).get('/messages/inbox?page=1&limit=20').set('Authorization', `Bearer ${b.token}`).expect(200);
+      const groupInboxImageRow = groupInboxImage.body.find((item: any) => item.groupId === groupId);
+      expect(groupInboxImageRow?.lastMessage.id).toBe(groupImageOnly.body.id);
+      expect(groupInboxImageRow?.lastMessage.text).toBe('Foto');
+      expect(await prisma.message.findUnique({ where: { id: groupImageOnly.body.id } })).toMatchObject({ text: '', imageUrl: groupImageOnly.body.imageUrl });
+      const groupEdit = await request(app.getHttpServer()).patch(`/groups/${groupId}/messages/${groupTextImage.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: '' }).expect(200);
+      expect(groupEdit.body).toMatchObject({ text: '', imageUrl: groupTextImage.body.imageUrl });
+      expect(await prisma.message.findUnique({ where: { id: groupTextImage.body.id } })).toMatchObject({ text: '', imageUrl: groupTextImage.body.imageUrl });
+      const directTextImage = await request(app.getHttpServer()).post(`/direct-messages/${b.id}/image`).set('Authorization', `Bearer ${a.token}`).field('text', 'texto da foto').attach('image', await image(), { filename: 'direct-caption.png', contentType: 'image/png' }).expect(201);
+      const directInbox = await request(app.getHttpServer()).get('/messages/inbox?page=1&limit=20').set('Authorization', `Bearer ${b.token}`).expect(200);
+      const directInboxRow = directInbox.body.find((item: any) => item.threadType === 'DIRECT' && item.peerUserId === a.id);
+      expect(directInboxRow?.lastMessage.id).toBe(directTextImage.body.id);
+      expect(directInboxRow?.lastMessage.text).toBe('texto da foto');
+      expect(directInboxRow?.lastMessage.text).not.toBe('Foto');
+      const directDestBefore = await prisma.directMessage.count({ where: { senderId: a.id, receiverId: b.id } });
+      const groupDestBefore = await prisma.message.count({ where: { groupId } });
+      await request(app.getHttpServer()).post(`/direct-messages/messages/${direct.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: b.id }).expect(404);
+      await request(app.getHttpServer()).post(`/direct-messages/messages/${direct.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'GROUP', targetId: groupId }).expect(404);
+      await request(app.getHttpServer()).post(`/groups/${groupId}/messages/${group.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: b.id }).expect(404);
+      await request(app.getHttpServer()).post(`/groups/${groupId}/messages/${group.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'GROUP', targetId: groupId }).expect(404);
+      await request(app.getHttpServer()).post(`/groups/${groupId}/messages/${groupTextImage.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: b.id }).expect(404);
+      await request(app.getHttpServer()).post(`/groups/${groupId}/messages/${groupTextImage.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'GROUP', targetId: groupId }).expect(404);
+      expect(await prisma.directMessage.count({ where: { senderId: a.id, receiverId: b.id } })).toBe(directDestBefore);
+      expect(await prisma.message.count({ where: { groupId } })).toBe(groupDestBefore);
+    } finally {
+      await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => {
+        socket.removeAllListeners();
+        if (!socket.connected) { socket.close(); resolve(); return; }
+        socket.once('disconnect', () => resolve());
+        socket.disconnect();
+        socket.close();
+        setTimeout(resolve, 250);
+      })));
+    }
   });
 });

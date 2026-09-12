@@ -1,4 +1,6 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import multer from 'multer';
 import type { Request, Response } from 'express';
 import { parsePagination, setPaginationHeaders } from '../common/pagination';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -26,6 +28,13 @@ export class DirectMessagesController {
   @Post(':userId')
   create(@Req() request: AuthenticatedRequest, @Param('userId') receiverId: string, @Body() dto: SendDirectMessageDto) {
     return this.directMessagesService.create(request.user.id, receiverId, dto);
+  }
+
+  @Post(':userId/image')
+  @UseInterceptors(FileInterceptor('image', { storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }))
+  async createImage(@Req() request: AuthenticatedRequest, @Param('userId') receiverId: string, @Body('text') text: string | undefined, @Body('replyToId') replyToId: string | undefined, @UploadedFile() file: { buffer: Buffer; mimetype: string } | undefined) {
+    if (!file) throw new BadRequestException('Selecione uma imagem para continuar.');
+    try { return await this.directMessagesService.createImage(request.user.id, receiverId, text, file, replyToId); } catch (error) { if (error instanceof Error && /image|MIME|Invalid/i.test(error.message)) throw new BadRequestException('A imagem deve estar em JPEG, PNG ou WebP.'); throw error; }
   }
 
   @Post('messages/:messageId/forward')

@@ -7,10 +7,13 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { MESSAGE_NOTIFICATION_TYPES } from '../notifications/notification-types';
 import { MessageEvents, type MessageLifecycleEvent } from '../realtime/message-events';
 import { summarizeReactions, withReactionSummary, type ReactionAggregate, type ReactionTypeValue } from '../messages/reaction-summary';
+import { randomUUID } from 'node:crypto';
+import { normalizeImage, AVATAR_MAX_BYTES } from '../storage/image-validator';
+import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class DirectMessagesService {
-  constructor(private readonly prisma: PrismaService, private readonly notificationsService: NotificationsService, private readonly messageEvents: MessageEvents = new MessageEvents()) {}
+  constructor(private readonly prisma: PrismaService, private readonly notificationsService: NotificationsService, private readonly messageEvents: MessageEvents = new MessageEvents(), private readonly storage?: StorageService) {}
 
   private async ensureUserExists(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: PUBLIC_USER_SELECT });
@@ -47,10 +50,10 @@ export class DirectMessagesService {
 
   private serializeReply(message: any): any {
     if (!message) return null;
-    return { id: message.id, senderId: message.senderId, authorName: this.publicUser(message.sender)?.name ?? null, text: message.deletedAt ? null : message.text, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null };
+    return { id: message.id, senderId: message.senderId, authorName: this.publicUser(message.sender)?.name ?? null, text: message.deletedAt ? null : (message.text || null), imageUrl: message.deletedAt ? null : message.imageUrl ?? null, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null };
   }
   private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }, replyTo: any = undefined): any {
-    return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, sender: this.publicUser(message.sender), receiver: this.publicUser(message.receiver), replyTo: replyTo === undefined ? null : this.serializeReply(replyTo) }, summary);
+    return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, imageUrl: message.deletedAt ? null : message.imageUrl ?? null, sender: this.publicUser(message.sender), receiver: this.publicUser(message.receiver), replyTo: replyTo === undefined ? null : this.serializeReply(replyTo) }, summary);
   }
 
   async create(senderId: string, receiverId: string, dto: SendDirectMessageDto) {
@@ -73,6 +76,29 @@ export class DirectMessagesService {
     return serialized;
   }
 
+  async createImage(senderId: string, receiverId: string, text: string | undefined, file: { buffer: Buffer; mimetype: string }, replyToId?: string) {
+    await this.ensureConversationUsers(senderId, receiverId);
+    await this.ensureAcceptedFriendship(senderId, receiverId);
+    let replyTarget: any = null;
+    if (replyToId) {
+      const target = await this.prisma.directMessage.findUnique({ where: { id: replyToId }, include: { sender: { select: PUBLIC_USER_SELECT } } });
+      if (!target || target.deletedAt || !((target.senderId === senderId && target.receiverId === receiverId) || (target.senderId === receiverId && target.receiverId === senderId))) throw new NotFoundException('Mensagem citada não encontrada.');
+      replyTarget = target;
+    }
+    if (!this.storage) throw new NotFoundException('Upload indisponível.');
+    const body = await normalizeImage(file, AVATAR_MAX_BYTES);
+    const upload = await this.storage.upload({ key: `messages/direct/${senderId}/${randomUUID()}.webp`, body, contentType: 'image/webp' });
+    const safeText = (text ?? '').trim();
+    if (!safeText && !upload.url) { await this.storage.delete(upload.key); throw new NotFoundException('Mensagem vazia.'); }
+    try {
+      const message = await this.prisma.directMessage.create({ data: { senderId, receiverId, text: safeText, imageUrl: upload.url, replyToId: replyTarget?.id }, include: { sender: { select: PUBLIC_USER_SELECT }, receiver: { select: PUBLIC_USER_SELECT } } });
+      await this.notificationsService.create(receiverId, { type: MESSAGE_NOTIFICATION_TYPES.DIRECT_MESSAGE, title: 'Nova mensagem', message: 'Você recebeu uma nova mensagem.', referenceId: senderId, referenceType: 'USER' });
+      const serialized = this.serializeMessage(message, undefined, replyTarget);
+      this.messageEvents.emitCreated({ message: serialized, senderId, receiverId });
+      return serialized;
+    } catch (error) { try { await this.storage.delete(upload.key); } catch { /* best effort cleanup */ } throw error; }
+  }
+
   async findConversation(userId: string, otherUserId: string, pagination: Pagination): Promise<PaginatedResult<any>>;
   async findConversation(userId: string, otherUserId: string): Promise<any[]>;
   async findConversation(userId: string, otherUserId: string, pagination?: Pagination) {
@@ -84,7 +110,7 @@ export class DirectMessagesService {
     ]);
     const reactionRows = items.length ? await (this.prisma as any).directMessageReaction.findMany({ where: { directMessageId: { in: items.map((message: any) => message.id) } }, select: { directMessageId: true, userId: true, type: true } }) : [];
     const replyIds = items.map((message: any) => message.replyToId).filter(Boolean);
-    const replyRows = replyIds.length ? await this.prisma.directMessage.findMany({ where: { id: { in: replyIds } }, select: { id: true, senderId: true, text: true, deletedAt: true, sender: { select: PUBLIC_USER_SELECT } } }) : [];
+    const replyRows = replyIds.length ? await this.prisma.directMessage.findMany({ where: { id: { in: replyIds } }, select: { id: true, senderId: true, text: true, imageUrl: true, deletedAt: true, sender: { select: PUBLIC_USER_SELECT } } }) : [];
     const repliesById = new Map(replyRows.map((row: any) => [row.id, row]));
     const byMessage = new Map<string, any[]>();
     for (const row of reactionRows) byMessage.set(row.directMessageId, [...(byMessage.get(row.directMessageId) ?? []), row]);
@@ -103,7 +129,7 @@ export class DirectMessagesService {
     const existing = await this.findOwnedMessage(userId, messageId);
     if (existing.deletedAt) throw new NotFoundException('Mensagem excluída não pode ser editada.');
     const nextText = text.trim();
-    if (!nextText || nextText.length > 2000) throw new NotFoundException('Texto de mensagem inválido.');
+    if ((!nextText && !existing.imageUrl) || nextText.length > 2000) throw new NotFoundException('Texto de mensagem inválido.');
     const message = nextText === existing.text ? existing : await this.prisma.directMessage.update({ where: { id: messageId }, data: { text: nextText, editedAt: new Date() }, include: { sender: { select: PUBLIC_USER_SELECT }, receiver: { select: PUBLIC_USER_SELECT } } });
     const serialized = this.serializeMessage(message, await this.reactionResult(userId, messageId));
     if (message !== existing) this.messageEvents.emitUpdated(this.lifecycle(serialized));

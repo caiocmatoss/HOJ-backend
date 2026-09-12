@@ -8,10 +8,13 @@ import { MESSAGE_NOTIFICATION_TYPES } from '../notifications/notification-types'
 import { Prisma } from '../../generated/prisma/client';
 import { MessageEvents, type MessageLifecycleEvent } from '../realtime/message-events';
 import { summarizeReactions, withReactionSummary, type ReactionAggregate, type ReactionTypeValue } from './reaction-summary';
+import { randomUUID } from 'node:crypto';
+import { normalizeImage, AVATAR_MAX_BYTES } from '../storage/image-validator';
+import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class MessagesService {
-  constructor(private readonly prisma: PrismaService, private readonly notificationsService: NotificationsService, private readonly messageEvents: MessageEvents = new MessageEvents()) {}
+  constructor(private readonly prisma: PrismaService, private readonly notificationsService: NotificationsService, private readonly messageEvents: MessageEvents = new MessageEvents(), private readonly storage?: StorageService) {}
 
   private async ensureMember(userId: string, groupId: string) {
     const group = await this.prisma.group.findUnique({ where: { id: groupId } });
@@ -28,8 +31,8 @@ export class MessagesService {
     return { ...rest, status: pref?.showStatus === false ? 'OFFLINE' : user.status, lastSeenAt: pref?.showLastSeen === false ? null : user.lastSeenAt };
   }
 
-  private serializeReply(message: any): any { if (!message) return null; return { id: message.id, userId: message.userId, authorName: this.publicUser(message.user)?.name ?? null, text: message.deletedAt ? null : message.text, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null }; }
-  private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }, replyTo: any = undefined): any { return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, user: this.publicUser(message.user), replyTo: replyTo === undefined ? null : this.serializeReply(replyTo) }, summary); }
+  private serializeReply(message: any): any { if (!message) return null; return { id: message.id, userId: message.userId, authorName: this.publicUser(message.user)?.name ?? null, text: message.deletedAt ? null : (message.text || null), imageUrl: message.deletedAt ? null : message.imageUrl ?? null, deletedAt: message.deletedAt ? new Date(message.deletedAt).toISOString() : null }; }
+  private serializeMessage(message: any, summary: ReactionAggregate = { reactions: [], myReaction: null }, replyTo: any = undefined): any { return withReactionSummary({ ...message, text: message.deletedAt ? null : message.text, imageUrl: message.deletedAt ? null : message.imageUrl ?? null, user: this.publicUser(message.user), replyTo: replyTo === undefined ? null : this.serializeReply(replyTo) }, summary); }
 
   async create(userId: string, groupId: string, dto: CreateMessageDto) {
     await this.ensureMember(userId, groupId);
@@ -50,6 +53,28 @@ export class MessagesService {
     return serialized;
   }
 
+  async createImage(userId: string, groupId: string, text: string | undefined, file: { buffer: Buffer; mimetype: string }, replyToId?: string) {
+    await this.ensureMember(userId, groupId);
+    let replyTarget: any = null;
+    if (replyToId) {
+      const target = await this.prisma.message.findUnique({ where: { id: replyToId }, include: { user: { select: PUBLIC_USER_SELECT } } });
+      if (!target || target.deletedAt || target.groupId !== groupId) throw new NotFoundException('Mensagem citada não encontrada.');
+      replyTarget = target;
+    }
+    if (!this.storage) throw new NotFoundException('Upload indisponível.');
+    const body = await normalizeImage(file, AVATAR_MAX_BYTES);
+    const upload = await this.storage.upload({ key: `messages/group/${groupId}/${randomUUID()}.webp`, body, contentType: 'image/webp' });
+    const safeText = (text ?? '').trim();
+    try {
+      const message = await this.prisma.message.create({ data: { groupId, userId, text: safeText, imageUrl: upload.url, replyToId: replyTarget?.id }, include: { user: { select: PUBLIC_USER_SELECT } } });
+      const members = await this.prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } });
+      await this.notificationsService.createMany(members.filter((member) => member.userId !== userId).map((member) => member.userId), { type: MESSAGE_NOTIFICATION_TYPES.GROUP_MESSAGE, title: 'Nova mensagem no grupo', message: 'Você recebeu uma nova mensagem em um grupo.', referenceId: groupId, referenceType: 'GROUP' });
+      const serialized = this.serializeMessage(message, undefined, replyTarget);
+      this.messageEvents.emitCreated({ message: serialized, groupId });
+      return serialized;
+    } catch (error) { try { await this.storage.delete(upload.key); } catch { /* best effort cleanup */ } throw error; }
+  }
+
   async findAll(userId: string, groupId: string, pagination: Pagination): Promise<PaginatedResult<any>>;
   async findAll(userId: string, groupId: string): Promise<any[]>;
   async findAll(userId: string, groupId: string, pagination?: Pagination) {
@@ -63,7 +88,7 @@ export class MessagesService {
     });
     const reactionRows = items.length ? await (this.prisma as any).messageReaction.findMany({ where: { messageId: { in: items.map((message: any) => message.id) } }, select: { messageId: true, userId: true, type: true } }) : [];
     const replyIds = items.map((message: any) => message.replyToId).filter(Boolean);
-    const replyRows = replyIds.length ? await this.prisma.message.findMany({ where: { id: { in: replyIds } }, select: { id: true, userId: true, text: true, deletedAt: true, user: { select: PUBLIC_USER_SELECT } } }) : [];
+    const replyRows = replyIds.length ? await this.prisma.message.findMany({ where: { id: { in: replyIds } }, select: { id: true, userId: true, text: true, imageUrl: true, deletedAt: true, user: { select: PUBLIC_USER_SELECT } } }) : [];
     const repliesById = new Map(replyRows.map((row: any) => [row.id, row]));
     const byMessage = new Map<string, any[]>();
     for (const row of reactionRows) byMessage.set(row.messageId, [...(byMessage.get(row.messageId) ?? []), row]);
@@ -81,29 +106,29 @@ export class MessagesService {
   }
 
   async inbox(userId: string, pagination: Pagination): Promise<PaginatedResult<any>> {
-    type InboxRow = { threadType: 'DIRECT' | 'GROUP'; threadKey: string; peerUserId: string | null; groupId: string | null; title: string; avatar: string | null; lastMessageId: string; lastMessageText: string; lastMessageCreatedAt: Date; lastSenderId: string; unreadCount: bigint; totalCount: bigint };
+    type InboxRow = { threadType: 'DIRECT' | 'GROUP'; threadKey: string; peerUserId: string | null; groupId: string | null; title: string; avatar: string | null; lastMessageId: string; lastMessageText: string; lastMessageImageUrl: string | null; lastMessageCreatedAt: Date; lastSenderId: string; unreadCount: bigint; totalCount: bigint };
     const rows = await this.prisma.$queryRaw<InboxRow[]>(Prisma.sql`
       WITH direct_base AS (
-        SELECT CASE WHEN dm."senderId" = ${userId} THEN dm."receiverId" ELSE dm."senderId" END AS peer_id, dm.id, dm.text, dm."createdAt", dm."senderId", dm."receiverId", dm."deletedAt"
+        SELECT CASE WHEN dm."senderId" = ${userId} THEN dm."receiverId" ELSE dm."senderId" END AS peer_id, dm.id, dm.text, dm."imageUrl", dm."createdAt", dm."senderId", dm."receiverId", dm."deletedAt"
         FROM "DirectMessage" dm
         JOIN "Friendship" f ON f.status = 'ACCEPTED' AND ((f."requesterId" = ${userId} AND f."addresseeId" = CASE WHEN dm."senderId" = ${userId} THEN dm."receiverId" ELSE dm."senderId" END) OR (f."addresseeId" = ${userId} AND f."requesterId" = CASE WHEN dm."senderId" = ${userId} THEN dm."receiverId" ELSE dm."senderId" END))
         WHERE dm."senderId" = ${userId} OR dm."receiverId" = ${userId}
       ), direct_latest AS (
-        SELECT DISTINCT ON (peer_id) peer_id, id, text, "createdAt", "senderId", "deletedAt" FROM direct_base ORDER BY peer_id, "createdAt" DESC, id DESC
+        SELECT DISTINCT ON (peer_id) peer_id, id, text, "imageUrl", "createdAt", "senderId", "deletedAt" FROM direct_base ORDER BY peer_id, "createdAt" DESC, id DESC
       ), direct_unread AS (
         SELECT b.peer_id, COUNT(*)::bigint AS unread_count FROM direct_base b LEFT JOIN "MessageReadState" rs ON rs."userId" = ${userId} AND rs."threadType" = 'DIRECT' AND rs."threadKey" = b.peer_id
         WHERE b."receiverId" = ${userId} AND b."deletedAt" IS NULL AND (rs."lastReadAt" IS NULL OR b."createdAt" > rs."lastReadAt" OR (b."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR b.id > rs."lastReadMessageId"))) GROUP BY b.peer_id
       ), group_base AS (
-        SELECT m."groupId" AS group_id, m.id, m.text, m."createdAt", m."userId", gm."joinedAt", g.name, m."deletedAt" FROM "Message" m JOIN "GroupMember" gm ON gm."groupId" = m."groupId" AND gm."userId" = ${userId} JOIN "Group" g ON g.id = m."groupId"
+        SELECT m."groupId" AS group_id, m.id, m.text, m."imageUrl", m."createdAt", m."userId", gm."joinedAt", g.name, m."deletedAt" FROM "Message" m JOIN "GroupMember" gm ON gm."groupId" = m."groupId" AND gm."userId" = ${userId} JOIN "Group" g ON g.id = m."groupId"
       ), group_latest AS (
-        SELECT DISTINCT ON (group_id) group_id, id, text, "createdAt", "userId", name, "deletedAt" FROM group_base ORDER BY group_id, "createdAt" DESC, id DESC
+        SELECT DISTINCT ON (group_id) group_id, id, text, "imageUrl", "createdAt", "userId", name, "deletedAt" FROM group_base ORDER BY group_id, "createdAt" DESC, id DESC
       ), group_unread AS (
         SELECT b.group_id, COUNT(*)::bigint AS unread_count FROM group_base b LEFT JOIN "MessageReadState" rs ON rs."userId" = ${userId} AND rs."threadType" = 'GROUP' AND rs."threadKey" = b.group_id
         WHERE b."userId" <> ${userId} AND b."deletedAt" IS NULL AND b."createdAt" >= b."joinedAt" AND (rs."lastReadAt" IS NULL OR b."createdAt" > rs."lastReadAt" OR (b."createdAt" = rs."lastReadAt" AND (rs."lastReadMessageId" IS NULL OR b.id > rs."lastReadMessageId"))) GROUP BY b.group_id
       ), threads AS (
-        SELECT 'DIRECT'::text AS "threadType", l.peer_id AS "threadKey", l.peer_id AS "peerUserId", NULL::text AS "groupId", u.name AS title, u.avatar, l.id AS "lastMessageId", CASE WHEN l."deletedAt" IS NULL THEN l.text ELSE 'Mensagem excluída' END AS "lastMessageText", l."createdAt" AS "lastMessageCreatedAt", l."senderId" AS "lastSenderId", COALESCE(un.unread_count, 0)::bigint AS "unreadCount" FROM direct_latest l JOIN "User" u ON u.id = l.peer_id LEFT JOIN direct_unread un ON un.peer_id = l.peer_id
+        SELECT 'DIRECT'::text AS "threadType", l.peer_id AS "threadKey", l.peer_id AS "peerUserId", NULL::text AS "groupId", u.name AS title, u.avatar, l.id AS "lastMessageId", CASE WHEN l."deletedAt" IS NULL AND l.text <> '' THEN l.text WHEN l."deletedAt" IS NULL AND l."imageUrl" IS NOT NULL THEN 'Foto' ELSE 'Mensagem excluída' END AS "lastMessageText", CASE WHEN l."deletedAt" IS NULL THEN l."imageUrl" ELSE NULL END AS "lastMessageImageUrl", l."createdAt" AS "lastMessageCreatedAt", l."senderId" AS "lastSenderId", COALESCE(un.unread_count, 0)::bigint AS "unreadCount" FROM direct_latest l JOIN "User" u ON u.id = l.peer_id LEFT JOIN direct_unread un ON un.peer_id = l.peer_id
         UNION ALL
-        SELECT 'GROUP'::text, l.group_id, NULL::text, l.group_id, l.name, NULL::text, l.id, CASE WHEN l."deletedAt" IS NULL THEN l.text ELSE 'Mensagem excluída' END, l."createdAt", l."userId", COALESCE(un.unread_count, 0)::bigint FROM group_latest l LEFT JOIN group_unread un ON un.group_id = l.group_id
+        SELECT 'GROUP'::text, l.group_id, NULL::text, l.group_id, l.name, NULL::text, l.id, CASE WHEN l."deletedAt" IS NULL AND l.text <> '' THEN l.text WHEN l."deletedAt" IS NULL AND l."imageUrl" IS NOT NULL THEN 'Foto' ELSE 'Mensagem excluída' END, CASE WHEN l."deletedAt" IS NULL THEN l."imageUrl" ELSE NULL END, l."createdAt", l."userId", COALESCE(un.unread_count, 0)::bigint FROM group_latest l LEFT JOIN group_unread un ON un.group_id = l.group_id
       )
       SELECT *, COUNT(*) OVER()::bigint AS "totalCount" FROM threads ORDER BY "lastMessageCreatedAt" DESC, "lastMessageId" DESC OFFSET ${pagination.skip} LIMIT ${pagination.take}
     `);
@@ -115,7 +140,7 @@ export class MessagesService {
     ]);
     const directById = new Map<string, any>(directMessages.map((message: any) => [message.id, message] as [string, any]));
     const groupById = new Map<string, any>(groupMessages.map((message: any) => [message.id, message] as [string, any]));
-    const items = rows.map((row) => { const message: any = row.threadType === 'DIRECT' ? directById.get(row.lastMessageId) : groupById.get(row.lastMessageId); const sender = row.threadType === 'DIRECT' ? message?.sender : message?.user; return { threadType: row.threadType, threadKey: row.threadKey, peerUserId: row.peerUserId ?? undefined, groupId: row.groupId ?? undefined, title: row.title, avatar: row.avatar, lastMessage: { id: row.lastMessageId, text: row.lastMessageText, createdAt: row.lastMessageCreatedAt, sender: this.publicUser(sender) }, unreadCount: Number(row.unreadCount) }; });
+    const items = rows.map((row) => { const message: any = row.threadType === 'DIRECT' ? directById.get(row.lastMessageId) : groupById.get(row.lastMessageId); const sender = row.threadType === 'DIRECT' ? message?.sender : message?.user; return { threadType: row.threadType, threadKey: row.threadKey, peerUserId: row.peerUserId ?? undefined, groupId: row.groupId ?? undefined, title: row.title, avatar: row.avatar, lastMessage: { id: row.lastMessageId, text: row.lastMessageText, imageUrl: row.lastMessageImageUrl, createdAt: row.lastMessageCreatedAt, sender: this.publicUser(sender) }, unreadCount: Number(row.unreadCount) }; });
     return { items, total: rows[0] ? Number(rows[0].totalCount) : 0 };
   }
 
@@ -158,7 +183,7 @@ export class MessagesService {
     if (!existing || existing.groupId !== groupId || existing.userId !== userId) throw new NotFoundException('Mensagem não encontrada.');
     if (existing.deletedAt) throw new NotFoundException('Mensagem excluída não pode ser editada.');
     const nextText = text.trim();
-    if (!nextText || nextText.length > 2000) throw new BadRequestException('Texto de mensagem inválido.');
+    if ((!nextText && !existing.imageUrl) || nextText.length > 2000) throw new BadRequestException('Texto de mensagem inválido.');
     const message = nextText === existing.text ? existing : await this.prisma.message.update({ where: { id: messageId }, data: { text: nextText, editedAt: new Date() }, include: { user: { select: PUBLIC_USER_SELECT } } });
     const serialized = this.serializeMessage(message, await this.reactionResult(userId, messageId));
     if (message !== existing) this.messageEvents.emitUpdated(this.lifecycle(serialized));

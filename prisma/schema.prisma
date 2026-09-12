@@ -310,6 +310,7 @@ model Message {
   groupId     String
   userId      String
   text        String
+  imageUrl    String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   editedAt    DateTime?
@@ -349,6 +350,7 @@ model DirectMessage {
   senderId    String
   receiverId  String
   text        String
+  imageUrl    String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   editedAt    DateTime?
