@@ -24,6 +24,20 @@ export class DirectMessagesService {
     await this.ensureUserExists(receiverId);
   }
 
+  private async ensureAcceptedFriendship(senderId: string, receiverId: string) {
+    const friendship = await this.prisma.friendship.findFirst({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { requesterId: senderId, addresseeId: receiverId },
+          { requesterId: receiverId, addresseeId: senderId },
+        ],
+      },
+      select: { id: true },
+    });
+    if (!friendship) throw new NotFoundException('Conversa não encontrada.');
+  }
+
   private publicUser(user: any) {
     const pref = user?.privacyPreferences;
     if (!user) return user;
@@ -41,6 +55,7 @@ export class DirectMessagesService {
 
   async create(senderId: string, receiverId: string, dto: SendDirectMessageDto) {
     await this.ensureConversationUsers(senderId, receiverId);
+    await this.ensureAcceptedFriendship(senderId, receiverId);
     const text = dto.text.trim();
     if (!text) throw new NotFoundException('A mensagem não pode estar vazia.');
     if (text.length > 2000) throw new NotFoundException('A mensagem não pode ter mais de 2000 caracteres.');

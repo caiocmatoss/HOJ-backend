@@ -6,13 +6,15 @@ import { CreateMessageDto } from './dto/create-message.dto';
 import { MessagesService } from './messages.service';
 import { REACTION_ORDER, type ReactionTypeValue } from './reaction-summary';
 import { DirectReadEvents } from '../realtime/direct-read-events';
+import { ForwardMessageDto } from './dto/forward-message.dto';
+import { MessageForwardService } from '../realtime/message-forward.service';
 
 type AuthenticatedRequest = Request & { user: { id: string } };
 
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class MessagesController {
-  constructor(private readonly messagesService: MessagesService, private readonly directReadEvents: DirectReadEvents) {}
+  constructor(private readonly messagesService: MessagesService, private readonly directReadEvents: DirectReadEvents, private readonly messageForwardService: MessageForwardService) {}
 
   @Get('messages/inbox')
   async inbox(@Req() request: AuthenticatedRequest, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) {
@@ -39,6 +41,9 @@ export class MessagesController {
   create(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Body() dto: CreateMessageDto) {
     return this.messagesService.create(request.user.id, groupId, dto);
   }
+
+  @Post('groups/:id/messages/:messageId/forward')
+  forward(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Param('messageId') messageId: string, @Body() dto: ForwardMessageDto) { return this.messageForwardService.fromGroup(request.user.id, groupId, messageId, dto); }
 
   @Get('groups/:id/messages')
   async findAll(@Req() request: AuthenticatedRequest, @Param('id') groupId: string, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) {

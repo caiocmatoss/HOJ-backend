@@ -36,6 +36,7 @@ describe('Messaging and invites pagination (e2e)', () => {
     const group = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${tokenA}`).send({ name: `Messaging Group ${stamp}`, venueId }).expect(201);
     groupId = group.body.id;
     await request(app.getHttpServer()).post(`/groups/${groupId}/members`).set('Authorization', `Bearer ${tokenA}`).send({ userId: ids[1] }).expect(201);
+    await prisma.friendship.create({ data: { requesterId: ids[0], addresseeId: ids[1], status: 'ACCEPTED' } });
     for (let i = 0; i < 3; i += 1) {
       await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${tokenA}`).send({ text: `group message ${i}` }).expect(201);
       await request(app.getHttpServer()).post(`/direct-messages/${ids[1]}`).set('Authorization', `Bearer ${tokenA}`).send({ text: `direct message ${i}` }).expect(201);

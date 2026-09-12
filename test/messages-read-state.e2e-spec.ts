@@ -442,4 +442,118 @@ describe('Messaging inbox and read state (integration)', () => {
       })));
     }
   });
+
+  it('forwards text snapshots across all Direct and Group destination combinations', async () => {
+    await prisma.friendship.upsert({ where: { requesterId_addresseeId: { requesterId: a.id, addresseeId: c.id } }, update: { status: 'ACCEPTED' }, create: { requesterId: a.id, addresseeId: c.id, status: 'ACCEPTED' } });
+    const targetGroup = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${a.token}`).send({ name: `Forward Target ${Date.now()}`, venueId }).expect(201);
+    const sourceDirect = await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'forward snapshot' }).expect(201);
+    const directToDirect = await request(app.getHttpServer()).post(`/direct-messages/messages/${sourceDirect.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: c.id }).expect(201);
+    const directToGroup = await request(app.getHttpServer()).post(`/direct-messages/messages/${sourceDirect.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'GROUP', targetId: targetGroup.body.id }).expect(201);
+    expect(directToDirect.body).toMatchObject({ text: 'forward snapshot', isForwarded: true, replyTo: null });
+    expect(directToGroup.body).toMatchObject({ text: 'forward snapshot', isForwarded: true, replyTo: null });
+    expect(directToDirect.body).not.toHaveProperty('sourceMessageId');
+    expect(directToDirect.body).not.toHaveProperty('sourceThreadId');
+    expect(directToDirect.body).not.toHaveProperty('forwardedFromMessageId');
+    expect(directToDirect.body).not.toHaveProperty('forwardedFromDirectMessageId');
+    await request(app.getHttpServer()).put(`/direct-messages/messages/${directToDirect.body.id}/reaction`).set('Authorization', `Bearer ${c.token}`).send({ type: 'LOVE' }).expect(200);
+    expect((await request(app.getHttpServer()).get(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${c.token}`).expect(200)).body.find((item: any) => item.id === directToDirect.body.id).reactions).toEqual([{ type: 'LOVE', count: 1 }]);
+
+    const sourceGroup = await request(app.getHttpServer()).post(`/groups/${groupId}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'group snapshot' }).expect(201);
+    const groupToDirect = await request(app.getHttpServer()).post(`/groups/${groupId}/messages/${sourceGroup.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: c.id }).expect(201);
+    const groupToGroup = await request(app.getHttpServer()).post(`/groups/${groupId}/messages/${sourceGroup.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'GROUP', targetId: targetGroup.body.id }).expect(201);
+    expect(groupToDirect.body).toMatchObject({ text: 'group snapshot', isForwarded: true, replyTo: null });
+    expect(groupToGroup.body).toMatchObject({ text: 'group snapshot', isForwarded: true, replyTo: null });
+
+    await request(app.getHttpServer()).patch(`/direct-messages/messages/${sourceDirect.body.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'source edited' }).expect(200);
+    await request(app.getHttpServer()).delete(`/direct-messages/messages/${sourceDirect.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    const reloadedForward = (await request(app.getHttpServer()).get(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${c.token}`).expect(200)).body.find((item: any) => item.id === directToDirect.body.id);
+    expect(reloadedForward).toMatchObject({ text: 'forward snapshot', isForwarded: true });
+    await request(app.getHttpServer()).post(`/direct-messages/messages/${sourceDirect.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: c.id }).expect(404);
+    await request(app.getHttpServer()).delete(`/groups/${targetGroup.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+  });
+
+  it('enforces accepted friendship for REST Direct creation in either direction', async () => {
+    await prisma.friendship.deleteMany({ where: { OR: [{ requesterId: a.id, addresseeId: c.id }, { requesterId: c.id, addresseeId: a.id }] } });
+    const before = await prisma.directMessage.count({ where: { OR: [{ senderId: a.id, receiverId: c.id }, { senderId: c.id, receiverId: a.id }] } });
+    await request(app.getHttpServer()).post(`/direct-messages/${c.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'unauthorized' }).expect(404);
+    expect(await prisma.directMessage.count({ where: { OR: [{ senderId: a.id, receiverId: c.id }, { senderId: c.id, receiverId: a.id }] } })).toBe(before);
+
+    await prisma.friendship.create({ data: { requesterId: c.id, addresseeId: a.id, status: 'ACCEPTED' } });
+    const accepted = await request(app.getHttpServer()).post(`/direct-messages/${c.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'authorized' }).expect(201);
+    expect(await prisma.directMessage.findUnique({ where: { id: accepted.body.id } })).toMatchObject({ senderId: a.id, receiverId: c.id, text: 'authorized' });
+  });
+
+  it('rejects unauthorized forward sources and destinations and preserves reply/reaction snapshot rules', async () => {
+    const sourceGroup = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${a.token}`).send({ name: `Forward Source ${Date.now()}`, venueId }).expect(201);
+    const targetGroup = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${a.token}`).send({ name: `Forward Private Target ${Date.now()}`, venueId }).expect(201);
+    const nonMemberTarget = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${b.token}`).send({ name: `Forward Nonmember Target ${Date.now()}`, venueId }).expect(201);
+    const original = await request(app.getHttpServer()).post(`/direct-messages/${b.id}`).set('Authorization', `Bearer ${a.token}`).send({ text: 'quoted source' }).expect(201);
+    const reply = await request(app.getHttpServer()).post(`/direct-messages/${a.id}`).set('Authorization', `Bearer ${b.token}`).send({ text: 'reply source', replyToId: original.body.id }).expect(201);
+    await request(app.getHttpServer()).put(`/direct-messages/messages/${reply.body.id}/reaction`).set('Authorization', `Bearer ${b.token}`).send({ type: 'LOVE' }).expect(200);
+
+    await prisma.friendship.deleteMany({ where: { OR: [{ requesterId: a.id, addresseeId: c.id }, { requesterId: c.id, addresseeId: a.id }] } });
+    const acceptedFriendshipAC = await prisma.friendship.findFirst({ where: { status: 'ACCEPTED', OR: [{ requesterId: a.id, addresseeId: c.id }, { requesterId: c.id, addresseeId: a.id }] } });
+    expect(acceptedFriendshipAC).toBeNull();
+    await request(app.getHttpServer()).post(`/direct-messages/messages/${original.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: c.id }).expect(404);
+    await request(app.getHttpServer()).post(`/direct-messages/messages/${original.body.id}/forward`).set('Authorization', `Bearer ${c.token}`).send({ targetType: 'DIRECT', targetId: b.id, text: 'forged text' }).expect(404);
+    await prisma.friendship.upsert({ where: { requesterId_addresseeId: { requesterId: a.id, addresseeId: c.id } }, update: { status: 'ACCEPTED' }, create: { requesterId: a.id, addresseeId: c.id, status: 'ACCEPTED' } });
+    await request(app.getHttpServer()).post(`/direct-messages/messages/${original.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'GROUP', targetId: nonMemberTarget.body.id }).expect(404);
+    const forwardedReply = await request(app.getHttpServer()).post(`/direct-messages/messages/${reply.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: c.id, text: 'forged text' }).expect(201);
+    expect(forwardedReply.body).toMatchObject({ text: 'reply source', isForwarded: true, replyTo: null, reactions: [], myReaction: null });
+    expect(forwardedReply.body).not.toHaveProperty('sourceMessageId');
+    expect(forwardedReply.body).not.toHaveProperty('sourceThreadId');
+
+    const groupSource = await request(app.getHttpServer()).post(`/groups/${sourceGroup.body.id}/messages`).set('Authorization', `Bearer ${a.token}`).send({ text: 'group source' }).expect(201);
+    await request(app.getHttpServer()).post(`/groups/${sourceGroup.body.id}/messages/${groupSource.body.id}/forward`).set('Authorization', `Bearer ${c.token}`).send({ targetType: 'GROUP', targetId: targetGroup.body.id }).expect(404);
+    await request(app.getHttpServer()).delete(`/groups/${sourceGroup.body.id}/messages/${groupSource.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    await request(app.getHttpServer()).post(`/groups/${sourceGroup.body.id}/messages/${groupSource.body.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'GROUP', targetId: targetGroup.body.id }).expect(404);
+    await request(app.getHttpServer()).post(`/direct-messages/messages/${reply.body.id}/forward`).set('Authorization', `Bearer ${c.token}`).send({ targetType: 'GROUP', targetId: targetGroup.body.id }).expect(404);
+    await request(app.getHttpServer()).delete(`/groups/${sourceGroup.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    await request(app.getHttpServer()).delete(`/groups/${targetGroup.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+    await request(app.getHttpServer()).delete(`/groups/${nonMemberTarget.body.id}`).set('Authorization', `Bearer ${b.token}`).expect(200);
+  });
+
+  it('emits one realtime event per REST forward and persists before broadcasting', async () => {
+    const targetGroup = await request(app.getHttpServer()).post('/groups').set('Authorization', `Bearer ${a.token}`).send({ name: `Forward Socket Target ${Date.now()}`, venueId }).expect(201);
+    await prisma.groupMember.create({ data: { groupId: targetGroup.body.id, userId: b.id } });
+    await prisma.friendship.upsert({ where: { requesterId_addresseeId: { requesterId: a.id, addresseeId: c.id } }, update: { status: 'ACCEPTED' }, create: { requesterId: a.id, addresseeId: c.id, status: 'ACCEPTED' } });
+    const directSource = await prisma.directMessage.create({ data: { senderId: a.id, receiverId: b.id, text: 'socket forward source' } });
+    const groupSource = await prisma.message.create({ data: { groupId: groupId, userId: a.id, text: 'group socket forward source' } });
+    const sockets: Socket[] = [];
+    const connect = (token: string) => new Promise<Socket>((resolve, reject) => {
+      const socket = io(baseUrl, { transports: ['websocket'], auth: { token } });
+      sockets.push(socket);
+      const timer = setTimeout(() => { socket.close(); reject(new Error('forward socket connection timeout')); }, 2000);
+      socket.once('connect', () => { clearTimeout(timer); resolve(socket); });
+      socket.once('connect_error', reject);
+    });
+    try {
+      const [socketA, socketB] = await Promise.all([connect(a.token), connect(b.token)]);
+      const directJoinA = waitForSocketEvent(socketA, 'direct:chat:joined', 'forward direct join A'); socketA.emit('direct:join', { userId: b.id }); await directJoinA;
+      const directJoinB = waitForSocketEvent(socketB, 'direct:chat:joined', 'forward direct join B'); socketB.emit('direct:join', { userId: a.id }); await directJoinB;
+      const unreadBefore = (await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${b.token}`).expect(200)).body.count as number;
+      const directResult = await waitForEventAndCount<any>(socketB, 'direct:message:new', 'forward direct event', async () => {
+        const response = await request(app.getHttpServer()).post(`/direct-messages/messages/${directSource.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'DIRECT', targetId: b.id }).expect(201);
+        return response.body.id as string;
+      });
+      expect(directResult.events).toHaveLength(1);
+      expect(directResult.events[0]).toMatchObject({ id: directResult.id, text: 'socket forward source', isForwarded: true });
+      expect(await prisma.directMessage.findUnique({ where: { id: directResult.id } })).toMatchObject({ id: directResult.id, isForwarded: true, text: 'socket forward source' });
+      const unreadAfter = (await request(app.getHttpServer()).get('/messages/unread/count').set('Authorization', `Bearer ${b.token}`).expect(200)).body.count as number;
+      expect(unreadAfter).toBe(unreadBefore + 1);
+
+      const groupJoinA = waitForSocketEvent(socketA, 'chat:joined', 'forward group join A'); socketA.emit('chat:join', { groupId: targetGroup.body.id }); await groupJoinA;
+      const groupJoinB = waitForSocketEvent(socketB, 'chat:joined', 'forward group join B'); socketB.emit('chat:join', { groupId: targetGroup.body.id }); await groupJoinB;
+      const groupResult = await waitForEventAndCount<any>(socketB, 'message:new', 'forward group event', async () => {
+        const response = await request(app.getHttpServer()).post(`/groups/${groupId}/messages/${groupSource.id}/forward`).set('Authorization', `Bearer ${a.token}`).send({ targetType: 'GROUP', targetId: targetGroup.body.id }).expect(201);
+        return response.body.id as string;
+      });
+      expect(groupResult.events).toHaveLength(1);
+      expect(groupResult.events[0]).toMatchObject({ id: groupResult.id, text: 'group socket forward source', isForwarded: true });
+      expect(await prisma.message.findUnique({ where: { id: groupResult.id } })).toMatchObject({ id: groupResult.id, isForwarded: true, text: 'group socket forward source' });
+    } finally {
+      await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => { socket.removeAllListeners(); if (!socket.connected) { socket.close(); resolve(); return; } socket.once('disconnect', () => resolve()); socket.disconnect(); socket.close(); setTimeout(resolve, 250); })));
+    }
+    await request(app.getHttpServer()).delete(`/groups/${targetGroup.body.id}`).set('Authorization', `Bearer ${a.token}`).expect(200);
+  });
 });

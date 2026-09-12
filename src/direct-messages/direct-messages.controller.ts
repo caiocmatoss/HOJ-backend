@@ -5,13 +5,15 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SendDirectMessageDto } from './dto/send-direct-message.dto';
 import { DirectMessagesService } from './direct-messages.service';
 import { REACTION_ORDER, type ReactionTypeValue } from '../messages/reaction-summary';
+import { ForwardMessageDto } from '../messages/dto/forward-message.dto';
+import { MessageForwardService } from '../realtime/message-forward.service';
 
 type AuthenticatedRequest = Request & { user: { id: string } };
 
 @Controller('direct-messages')
 @UseGuards(JwtAuthGuard)
 export class DirectMessagesController {
-  constructor(private readonly directMessagesService: DirectMessagesService) {}
+  constructor(private readonly directMessagesService: DirectMessagesService, private readonly messageForwardService: MessageForwardService) {}
 
   @Get(':userId')
   async findConversation(@Req() request: AuthenticatedRequest, @Param('userId') otherUserId: string, @Query('page') page?: string, @Query('limit') limit?: string, @Res({ passthrough: true }) response?: Response) {
@@ -25,6 +27,9 @@ export class DirectMessagesController {
   create(@Req() request: AuthenticatedRequest, @Param('userId') receiverId: string, @Body() dto: SendDirectMessageDto) {
     return this.directMessagesService.create(request.user.id, receiverId, dto);
   }
+
+  @Post('messages/:messageId/forward')
+  forward(@Req() request: AuthenticatedRequest, @Param('messageId') messageId: string, @Body() dto: ForwardMessageDto) { return this.messageForwardService.fromDirect(request.user.id, messageId, dto); }
 
   @Patch('messages/:messageId')
   edit(@Req() request: AuthenticatedRequest, @Param('messageId') messageId: string, @Body() body: { text: string }) { return this.directMessagesService.edit(request.user.id, messageId, body.text); }
