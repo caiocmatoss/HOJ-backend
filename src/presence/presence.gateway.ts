@@ -5,6 +5,7 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { Optional } from '@nestjs/common';
 
 import type {
   OnGatewayConnection,
@@ -17,6 +18,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { Server, Socket } from 'socket.io';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { VenuePresenceEvents } from '../realtime/venue-presence-events';
 
 import type { AppSocket } from '../auth/socket/socket.types';
 
@@ -41,6 +43,12 @@ type PresenceResponse = {
   event: string;
   data: unknown;
 };
+
+type VenueSubscriptionPayload = {
+  venueId?: unknown;
+};
+
+const venueRoom = (venueId: string): string => `venue:${venueId}`;
 
 @WebSocketGateway({
   cors: {
@@ -82,7 +90,15 @@ export class PresenceGateway
   constructor(
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
-  ) {}
+    @Optional() private readonly venuePresenceEvents?: VenuePresenceEvents,
+  ) {
+    this.venuePresenceEvents?.on('changed', this.handleVenuePresenceChanged);
+  }
+
+  private readonly handleVenuePresenceChanged = ({ venueId }: { venueId: string }): void => {
+    if (!this.server || !venueId) return;
+    this.server.to(venueRoom(venueId)).emit('venue:presence:changed', { venueId });
+  };
 
   afterInit(server: Server): void {
     void 0;
@@ -230,6 +246,42 @@ export class PresenceGateway
     const ids = Array.from(this.userConnections.keys());
     const users = ids.length === 0 ? [] : await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, status: true, lastSeenAt: true, privacyPreferences: { select: { showStatus: true, showLastSeen: true } } } });
     return { event: 'presence:list', data: users.map((user: any) => { const self = user.id === currentUser.id; const preferences = user.privacyPreferences; return { id: user.id, status: self || preferences?.showStatus !== false ? user.status : 'OFFLINE', lastSeenAt: self || preferences?.showLastSeen !== false ? user.lastSeenAt : null }; }) };
+  }
+
+  @SubscribeMessage('venue:subscribe')
+  async handleVenueSubscribe(
+    @ConnectedSocket() client: AppSocket,
+    @MessageBody() data: VenueSubscriptionPayload,
+  ): Promise<PresenceResponse> {
+    if (!client.data.user) {
+      return { event: 'venue:error', data: { code: 'UNAUTHORIZED', message: 'Usuário não autenticado.' } };
+    }
+    const venueId = typeof data?.venueId === 'string' ? data.venueId.trim() : '';
+    if (!venueId) {
+      return { event: 'venue:error', data: { code: 'INVALID_VENUE', message: 'Venue inválido.' } };
+    }
+    const venue = await this.prisma.venue.findUnique({ where: { id: venueId }, select: { id: true } });
+    if (!venue) {
+      return { event: 'venue:error', data: { code: 'VENUE_NOT_FOUND', message: 'Local não encontrado.' } };
+    }
+    await client.join(venueRoom(venueId));
+    return { event: 'venue:subscribed', data: { venueId } };
+  }
+
+  @SubscribeMessage('venue:unsubscribe')
+  async handleVenueUnsubscribe(
+    @ConnectedSocket() client: AppSocket,
+    @MessageBody() data: VenueSubscriptionPayload,
+  ): Promise<PresenceResponse> {
+    if (!client.data.user) {
+      return { event: 'venue:error', data: { code: 'UNAUTHORIZED', message: 'Usuário não autenticado.' } };
+    }
+    const venueId = typeof data?.venueId === 'string' ? data.venueId.trim() : '';
+    if (!venueId) {
+      return { event: 'venue:error', data: { code: 'INVALID_VENUE', message: 'Venue inválido.' } };
+    }
+    await client.leave(venueRoom(venueId));
+    return { event: 'venue:unsubscribed', data: { venueId } };
   }
   private async authenticateSocket(
     socket: AppSocket,

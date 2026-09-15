@@ -1,8 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getCheckinExpiry, getCheckinTtlMinutes } from './checkin-lifecycle';
 import { getOccupancyPercent } from '../venues/occupancy-percent';
+import { VenuePresenceEvents } from '../realtime/venue-presence-events';
 
 const userSelect = { id: true, name: true, email: true, avatar: true, bio: true, status: true } as const;
 const presenceUserSelect = { id: true, name: true, avatar: true } as const;
@@ -25,26 +26,30 @@ async function serializableTransaction<T>(prisma: PrismaService, callback: (tx: 
 
 @Injectable()
 export class CheckinsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, @Optional() private readonly venuePresenceEvents?: VenuePresenceEvents) {}
 
   async create(userId: string, venueId: string) {
     const venue = await this.prisma.venue.findUnique({ where: { id: venueId } });
     if (!venue) throw new NotFoundException('Local não encontrado.');
     const now = new Date();
     const expiresAt = getCheckinExpiry(now, getCheckinTtlMinutes());
-    return serializableTransaction(this.prisma, async (tx) => {
+    let previousVenueId: string | null = null;
+    let presenceChanged = true;
+    const result = await serializableTransaction(this.prisma, async (tx) => {
       const expired = await tx.checkin.findMany({ where: { userId, checkedOutAt: null, expiresAt: { lte: now } }, select: { id: true, venueId: true } });
       for (const old of expired) {
         await tx.checkin.update({ where: { id: old.id }, data: { checkedOutAt: now } });
       }
       const active = await tx.checkin.findFirst({ where: { userId, checkedOutAt: null, expiresAt: { gt: now } }, orderBy: { checkedInAt: 'desc' } });
       if (active?.venueId === venueId) {
+        presenceChanged = false;
         const checkin = await tx.checkin.update({ where: { id: active.id }, data: { expiresAt }, include: { user: { select: userSelect }, venue: { select: venueSelect } } });
         const currentVenue = await tx.venue.findUnique({ where: { id: venueId }, select: { id: true, name: true, occupancy: true, capacity: true } });
         const activeOccupancy = await tx.checkin.count({ where: { venueId, checkedOutAt: null, expiresAt: { gt: now } } });
         return { checkin: { ...checkin, venue: { ...checkin.venue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, checkin.venue?.capacity) } }, venue: currentVenue ? { ...currentVenue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, currentVenue.capacity) } : currentVenue };
       }
       if (active) {
+        previousVenueId = active.venueId;
         await tx.checkin.update({ where: { id: active.id }, data: { checkedOutAt: now } });
       }
       const checkin = await tx.checkin.create({ data: { userId, venueId, checkedInAt: now, expiresAt }, include: { user: { select: userSelect }, venue: { select: venueSelect } } });
@@ -52,6 +57,11 @@ export class CheckinsService {
       const activeOccupancy = await tx.checkin.count({ where: { venueId, checkedOutAt: null, expiresAt: { gt: now } } });
       return { checkin: { ...checkin, venue: { ...checkin.venue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, checkin.venue?.capacity) } }, venue: currentVenue ? { ...currentVenue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, currentVenue.capacity) } : currentVenue };
     });
+    if (presenceChanged) {
+      this.venuePresenceEvents?.emitChanged(venueId);
+      if (previousVenueId && previousVenueId !== venueId) this.venuePresenceEvents?.emitChanged(previousVenueId);
+    }
+    return result;
   }
 
   async getMyActiveCheckin(userId: string) {
@@ -82,7 +92,7 @@ export class CheckinsService {
 
   async checkout(userId: string, venueId: string) {
     const now = new Date();
-    return serializableTransaction(this.prisma, async (tx) => {
+    const result = await serializableTransaction(this.prisma, async (tx) => {
       const checkin = await tx.checkin.findFirst({ where: { userId, venueId, checkedOutAt: null, expiresAt: { gt: now } }, orderBy: { checkedInAt: 'desc' } });
       if (!checkin) throw new NotFoundException('Check-in ativo não encontrado.');
       const updatedCheckin = await tx.checkin.update({ where: { id: checkin.id }, data: { checkedOutAt: now }, include: { user: { select: userSelect }, venue: { select: { id: true, name: true, occupancy: true, capacity: true } } } });
@@ -90,6 +100,8 @@ export class CheckinsService {
       const activeOccupancy = await tx.checkin.count({ where: { venueId, checkedOutAt: null, expiresAt: { gt: now } } });
       return { checkin: { ...updatedCheckin, venue: { ...updatedCheckin.venue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, updatedCheckin.venue?.capacity) } }, venue: updatedVenue ? { ...updatedVenue, occupancy: activeOccupancy, occupancyPercent: getOccupancyPercent(activeOccupancy, updatedVenue.capacity) } : updatedVenue };
     });
+    this.venuePresenceEvents?.emitChanged(venueId);
+    return result;
   }
 
   async getMyCheckinHistory(userId: string) {

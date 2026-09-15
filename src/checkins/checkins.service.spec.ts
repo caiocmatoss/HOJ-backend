@@ -1,4 +1,5 @@
 import { CheckinsService } from './checkins.service';
+import { VenuePresenceEvents } from '../realtime/venue-presence-events';
 
 function txMock() {
   return {
@@ -33,5 +34,39 @@ describe('CheckinsService lifecycle transitions', () => {
     const prisma = { $transaction: jest.fn((cb: any) => cb(tx)) };
     await new CheckinsService(prisma as never).checkout('u1', 'v1');
     expect(tx.checkin.update).toHaveBeenCalledWith(expect.objectContaining({ data: { checkedOutAt: expect.any(Date) } }));
+  });
+
+  it('emits presence changes only after successful check-in and switch', async () => {
+    const tx = txMock();
+    tx.checkin.findFirst.mockResolvedValue({ id: 'c1', venueId: 'old' });
+    tx.checkin.update.mockResolvedValue({});
+    tx.checkin.create.mockResolvedValue({ id: 'c2' });
+    const prisma = { venue: { findUnique: jest.fn().mockResolvedValue(venue) }, $transaction: jest.fn((cb: any) => cb(tx)) };
+    const events = new VenuePresenceEvents();
+    const emitChanged = jest.spyOn(events, 'emitChanged');
+    await new CheckinsService(prisma as never, events).create('u1', 'v1');
+    expect(emitChanged).toHaveBeenNthCalledWith(1, 'v1');
+    expect(emitChanged).toHaveBeenNthCalledWith(2, 'old');
+  });
+
+  it('emits checkout presence change after persistence', async () => {
+    const tx = txMock();
+    tx.checkin.findFirst.mockResolvedValue({ id: 'c1' });
+    tx.checkin.update.mockResolvedValue({ id: 'c1' });
+    const prisma = { $transaction: jest.fn((cb: any) => cb(tx)) };
+    const events = new VenuePresenceEvents();
+    const emitChanged = jest.spyOn(events, 'emitChanged');
+    await new CheckinsService(prisma as never, events).checkout('u1', 'v1');
+    expect(emitChanged).toHaveBeenCalledWith('v1');
+  });
+
+  it('does not emit when checkout persistence fails', async () => {
+    const tx = txMock();
+    tx.checkin.findFirst.mockResolvedValue(null);
+    const prisma = { $transaction: jest.fn((cb: any) => cb(tx)) };
+    const events = new VenuePresenceEvents();
+    const emitChanged = jest.spyOn(events, 'emitChanged');
+    await expect(new CheckinsService(prisma as never, events).checkout('u1', 'v1')).rejects.toThrow();
+    expect(emitChanged).not.toHaveBeenCalled();
   });
 });
