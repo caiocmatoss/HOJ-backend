@@ -5,6 +5,7 @@ import { getCheckinExpiry, getCheckinTtlMinutes } from './checkin-lifecycle';
 import { getOccupancyPercent } from '../venues/occupancy-percent';
 
 const userSelect = { id: true, name: true, email: true, avatar: true, bio: true, status: true } as const;
+const presenceUserSelect = { id: true, name: true, avatar: true } as const;
 const venueSelect = { id: true, name: true, category: true, address: true, latitude: true, longitude: true, occupancy: true, capacity: true, status: true } as const;
 const MAX_SERIALIZABLE_RETRIES = 3;
 
@@ -64,6 +65,19 @@ export class CheckinsService {
     const venue = await this.prisma.venue.findUnique({ where: { id: venueId }, select: { id: true } });
     if (!venue) throw new NotFoundException('Local não encontrado.');
     return this.prisma.checkin.findMany({ where: { venueId, checkedOutAt: null, expiresAt: { gt: new Date() } }, include: { user: { select: userSelect } }, orderBy: { checkedInAt: 'desc' } });
+  }
+
+  async getVenuePresence(userId: string, venueId: string) {
+    const venue = await this.prisma.venue.findUnique({ where: { id: venueId }, select: { id: true } });
+    if (!venue) throw new NotFoundException('Local não encontrado.');
+    const activeWhere = { venueId, checkedOutAt: null, expiresAt: { gt: new Date() } } as const;
+    const [count, friendships] = await Promise.all([
+      this.prisma.checkin.count({ where: activeWhere }),
+      this.prisma.friendship.findMany({ where: { status: 'ACCEPTED', OR: [{ requesterId: userId }, { addresseeId: userId }] }, select: { requesterId: true, addresseeId: true } }),
+    ]);
+    const friendIds = friendships.map((friendship) => friendship.requesterId === userId ? friendship.addresseeId : friendship.requesterId);
+    const friendsPresent = friendIds.length === 0 ? [] : await this.prisma.checkin.findMany({ where: { ...activeWhere, userId: { in: friendIds, not: userId } }, select: { checkedInAt: true, user: { select: presenceUserSelect } }, orderBy: [{ checkedInAt: 'desc' }, { id: 'desc' }] });
+    return { venueId, count, friendsPresent: friendsPresent.map(({ user }) => ({ id: user.id, name: user.name, avatar: user.avatar ?? null })) };
   }
 
   async checkout(userId: string, venueId: string) {

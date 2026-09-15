@@ -57,6 +57,14 @@ export class CheckinsController {
     return this.checkinsService.getVenueCheckins(request.user.id, venueId);
   }
 
+  @Get('venues/:venueId/presence')
+  getVenuePresence(
+    @Req() request: AuthenticatedRequest,
+    @Param('venueId') venueId: string,
+  ) {
+    return this.checkinsService.getVenuePresence(request.user.id, venueId);
+  }
+
   @Patch('checkins/:venueId/checkout')
   checkout(
     @Req() request: AuthenticatedRequest,
