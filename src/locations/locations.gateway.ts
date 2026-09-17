@@ -18,6 +18,7 @@ import type { AppSocket, SocketData } from '../auth/socket/socket.types';
 import { PrismaService } from '../prisma/prisma.service';
 
 import { LocationsService } from './locations.service';
+import { approximateCoordinate } from './location-privacy';
 
 type JwtPayload = {
   sub: string;
@@ -263,6 +264,7 @@ server.use((socket: Socket, next) => {
       });
 
       const nearby = await this.friendsService.getNearbyFriends(user.id, 10);
+      const canShare = await this.locationsService.canShareWithFriends(user.id);
 
       const locationData: LocationData = {
         userId: user.id,
@@ -271,12 +273,16 @@ server.use((socket: Socket, next) => {
         updatedAt: location.updatedAt,
       };
 
-      for (const friend of nearby.friends) {
-        this.server.to(`user:${friend.id}`).emit('location:updated', {
-          ...locationData,
-          distanceMeters: friend.distanceMeters,
-          distanceKm: friend.distanceKm,
-        });
+      if (canShare) {
+        for (const friend of nearby.friends) {
+          this.server.to(`user:${friend.id}`).emit('location:updated', {
+            ...locationData,
+            latitude: approximateCoordinate(latitude),
+            longitude: approximateCoordinate(longitude),
+            distanceMeters: friend.distanceMeters,
+            distanceKm: friend.distanceKm,
+          });
+        }
       }
 
       client.emit('location:updated', locationData);

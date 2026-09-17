@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import type { Pagination } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
+import { approximateCoordinate, isFreshFriendLocation } from '../locations/location-privacy';
 
 @Injectable()
 export class FriendsService {
@@ -216,10 +217,9 @@ export class FriendsService {
           select: {
             id: true,
             name: true,
-            email: true,
             avatar: true,
-            bio: true,
             status: true,
+            locationPreferences: { select: { shareWithFriends: true } },
             privacyPreferences: { select: { showStatus: true } },
           },
         },
@@ -235,6 +235,10 @@ export class FriendsService {
     const earthRadiusKm = 6371;
 
     const friends = locations
+      .filter((location) =>
+        location.user.locationPreferences?.shareWithFriends === true &&
+        isFreshFriendLocation(location.updatedAt),
+      )
       .map((location) => {
         const friendLatitude = Number(location.latitude);
 
@@ -257,12 +261,10 @@ export class FriendsService {
         return {
           id: location.user.id,
           name: location.user.name,
-          email: location.user.email,
           avatar: location.user.avatar,
-          bio: location.user.bio,
           status: location.user.privacyPreferences?.showStatus === false ? 'OFFLINE' : location.user.status,
-          latitude: friendLatitude,
-          longitude: friendLongitude,
+          latitude: approximateCoordinate(friendLatitude),
+          longitude: approximateCoordinate(friendLongitude),
           locationUpdatedAt: location.updatedAt,
           distanceMeters: Math.round(distanceKm * 1000),
           distanceKm: Math.round(distanceKm * 100) / 100,

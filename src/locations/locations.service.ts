@@ -65,6 +65,15 @@ export class LocationsService {
     });
   }
 
+  async canShareWithFriends(userId: string): Promise<boolean> {
+    const preferences = await this.prisma.locationPreferences.findUnique({
+      where: { userId },
+      select: { shareWithFriends: true },
+    });
+
+    return preferences?.shareWithFriends === true;
+  }
+
   async remove(userId: string) {
     const location = await this.prisma.userLocation.findUnique({
       where: {
