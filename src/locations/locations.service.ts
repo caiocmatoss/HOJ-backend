@@ -1,13 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { UpdateLocationPreferencesDto } from './dto/update-location-preferences.dto';
+import { LocationRevocationEvents } from '../realtime/location-revocation-events';
 
 @Injectable()
 export class LocationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly locationRevocationEvents?: LocationRevocationEvents,
+  ) {}
 
   getPreferences(userId: string) {
     return this.prisma.locationPreferences.upsert({
@@ -18,10 +22,21 @@ export class LocationsService {
   }
 
   updatePreferences(userId: string, dto: UpdateLocationPreferencesDto) {
-    return this.prisma.locationPreferences.upsert({
+    return this.prisma.locationPreferences.findUnique({
       where: { userId },
-      create: { userId, ...dto },
-      update: dto,
+      select: { shareWithFriends: true },
+    }).then(async (previous) => {
+      const updated = await this.prisma.locationPreferences.upsert({
+        where: { userId },
+        create: { userId, ...dto },
+        update: dto,
+      });
+
+      if (previous?.shareWithFriends === true && dto.shareWithFriends === false) {
+        this.locationRevocationEvents?.emitRevoked(userId);
+      }
+
+      return updated;
     });
   }
 

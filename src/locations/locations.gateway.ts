@@ -9,6 +9,7 @@ import {
 
 import type { OnGatewayInit } from '@nestjs/websockets';
 
+import { Optional } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 
 import type { Server, Socket } from 'socket.io';
@@ -19,6 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { LocationsService } from './locations.service';
 import { approximateCoordinate } from './location-privacy';
+import { LocationRevocationEvents, type LocationRevokedEvent } from '../realtime/location-revocation-events';
 
 type JwtPayload = {
   sub: string;
@@ -69,7 +71,23 @@ export class LocationsGateway implements OnGatewayInit {
     private readonly friendsService: FriendsService,
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
-  ) {}
+    @Optional() private readonly locationRevocationEvents?: LocationRevocationEvents,
+  ) {
+    this.locationRevocationEvents?.on('revoked', this.handleLocationRevoked);
+  }
+
+  private readonly handleLocationRevoked = async ({ userId }: LocationRevokedEvent): Promise<void> => {
+    if (!this.server || !userId) return;
+
+    try {
+      const friendIds = await this.locationsService.getAcceptedFriendIds(userId);
+      for (const friendId of friendIds) {
+        this.server.to(`user:${friendId}`).emit('location:revoked', { userId });
+      }
+    } catch {
+      console.error('[locations.gateway] Revocation delivery failed.');
+    }
+  };
 
   afterInit(server: Server): void {
     void 0;

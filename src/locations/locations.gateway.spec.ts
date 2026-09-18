@@ -1,4 +1,5 @@
 import { LocationsGateway } from './locations.gateway';
+import { LocationRevocationEvents } from '../realtime/location-revocation-events';
 
 describe('LocationsGateway privacy', () => {
   function createGateway(canShare: boolean) {
@@ -29,5 +30,43 @@ describe('LocationsGateway privacy', () => {
     const payload = toEmit.mock.calls[0][1];
     expect(payload).not.toHaveProperty('email');
     expect(payload).not.toHaveProperty('bio');
+  });
+
+  it('sends a minimal revocation only to accepted friends', async () => {
+    const toEmit = jest.fn();
+    const serverEmit = jest.fn();
+    const events = new LocationRevocationEvents();
+    const locationsService = {
+      getAcceptedFriendIds: jest
+        .fn()
+        .mockResolvedValue(['friend-a', 'friend-b']),
+    };
+    const gateway = new LocationsGateway(
+      locationsService as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      events,
+    );
+    gateway.server = {
+      emit: serverEmit,
+      to: jest.fn(() => ({ emit: toEmit })),
+    } as any;
+
+    events.emitRevoked('user-1');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(gateway.server.to).toHaveBeenCalledWith('user:friend-a');
+    expect(gateway.server.to).toHaveBeenCalledWith('user:friend-b');
+    expect(toEmit).toHaveBeenCalledTimes(2);
+    expect(toEmit).toHaveBeenNthCalledWith(1, 'location:revoked', {
+      userId: 'user-1',
+    });
+    expect(toEmit).toHaveBeenNthCalledWith(2, 'location:revoked', {
+      userId: 'user-1',
+    });
+    expect(serverEmit).not.toHaveBeenCalled();
+    const payload = toEmit.mock.calls[0][1];
+    expect(Object.keys(payload)).toEqual(['userId']);
   });
 });
